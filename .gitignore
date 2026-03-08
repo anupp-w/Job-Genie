@@ -38,3 +38,7 @@ frontend/yarn-error.log*
 frontend/.pnpm-debug.log*
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+
+# User Exclusions
+"reference inspo/"
+README.md
