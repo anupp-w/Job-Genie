@@ -1,0 +1,308 @@
+/* ============================================
+   JOB GENIE DESIGN SYSTEM
+   Based on Retell AI's Premium SaaS Aesthetic
+   ============================================ */
+
+/* === RETELL AI FLUID TYPOGRAPHY SYSTEM === */
+html {
+    font-size: calc(0.625rem + 0.41666666666666663vw);
+}
+
+@media screen and (max-width:1920px) {
+    html {
+        font-size: calc(0.625rem + 0.41666666666666674vw);
+    }
+}
+
+@media screen and (max-width:1440px) {
+    html {
+        font-size: calc(0.8126951092611863rem + 0.20811654526534862vw);
+    }
+}
+
+@media screen and (max-width:479px) {
+    html {
+        font-size: calc(0.7494769874476988rem + 0.8368200836820083vw);
+    }
+}
+
+/* === FONT SMOOTHING (Retell AI Standard) === */
+* {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    box-sizing: border-box;
+}
+
+/* === ROOT VARIABLES === */
+:root {
+    /* Retell AI Color Palette */
+    --brand-dark-900: #000814;
+    --brand-dark-800: #001d3d;
+    --brand-dark-700: #003566;
+    --brand-dark-500: #00122e;
+
+    --brand-blue-900: #0466c8;
+    --brand-blue-700: #0353a4;
+    --brand-blue-500: #023e7d;
+    --brand-blue-300: #4a90e2;
+
+    --brand-accent-500: #ffc300;
+    --brand-accent-400: #ffd60a;
+
+    --brand-grey-900: #f8f9fa;
+    --brand-grey-700: #e9ecef;
+    --brand-grey-500: #dee2e6;
+    --brand-grey-300: #ced4da;
+
+    /* Semantic Colors */
+    --color-success: #06d6a0;
+    --color-warning: #ffd60a;
+    --color-error: #ef476f;
+    --color-info: #4a90e2;
+
+    /* Typography - Retell AI uses Inter, Space Grotesk */
+    --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-display: 'Space Grotesk', 'Inter', sans-serif;
+    --font-mono: 'Inconsolata', 'Courier New', monospace;
+
+    /* Spacing Scale */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+
+    /* Border Radius */
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --radius-2xl: 1.5rem;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+    /* Transitions */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 500ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* === GLOBAL STYLES === */
+body {
+    margin: 0;
+    font-family: var(--font-primary);
+    color: var(--brand-dark-700);
+    background: var(--brand-grey-900);
+    overflow-x: hidden;
+    line-height: 1.6;
+}
+
+/* === RETELL AI BUTTON ANIMATIONS === */
+@keyframes buttonBlur {
+    0% {
+        transform: translateX(-100%);
+        backdrop-filter: blur(0px);
+    }
+
+    50% {
+        transform: translateX(0%);
+        backdrop-filter: blur(1px);
+    }
+
+    100% {
+        transform: translateX(100%);
+        backdrop-filter: blur(0px);
+    }
+}
+
+@keyframes buttonTextBlur {
+    0% {
+        filter: blur(0px);
+    }
+
+    25% {
+        filter: blur(1px);
+    }
+
+    50% {
+        filter: blur(2px);
+    }
+
+    100% {
+        filter: blur(0px);
+    }
+}
+
+/* === MODERN BUTTON (Retell AI Style) === */
+.btn-modern {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-6);
+    font-family: var(--font-primary);
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: var(--radius-lg);
+    border: none;
+    cursor: pointer;
+    overflow: hidden;
+    transition: all var(--transition-base);
+    text-decoration: none;
+}
+
+.btn-modern .btn-label-text {
+    position: relative;
+    z-index: 1;
+}
+
+.btn-modern:hover .btn-label-text {
+    animation: buttonTextBlur 1s cubic-bezier(0.380, 0.005, 0.215, 1) forwards;
+}
+
+.btn-modern::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transition: left var(--transition-slow);
+}
+
+.btn-modern:hover::before {
+    left: 100%;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--brand-blue-700), var(--brand-blue-500));
+    color: white;
+    box-shadow: var(--shadow-md);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-xl);
+}
+
+.btn-secondary {
+    background: white;
+    color: var(--brand-dark-700);
+    border: 2px solid var(--brand-grey-300);
+}
+
+.btn-secondary:hover {
+    border-color: var(--brand-blue-500);
+    color: var(--brand-blue-500);
+}
+
+/* === MODERN INPUT (Retell AI Style) === */
+.input-modern {
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    font-family: var(--font-primary);
+    font-size: 1rem;
+    color: var(--brand-dark-700);
+    background: white;
+    border: 2px solid var(--brand-grey-300);
+    border-radius: var(--radius-md);
+    outline: none;
+    transition: all var(--transition-base);
+}
+
+.input-modern:focus {
+    border-color: var(--brand-blue-500);
+    box-shadow: 0 0 0 3px rgba(4, 102, 200, 0.1);
+}
+
+.input-modern::placeholder {
+    color: var(--brand-grey-300);
+}
+
+/* === PREMIUM CARD === */
+.card-premium {
+    background: white;
+    border-radius: var(--radius-xl);
+    padding: var(--space-8);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--brand-grey-300);
+    transition: all var(--transition-base);
+}
+
+.card-premium:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-xl);
+}
+
+/* === ANIMATIONS === */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fadeIn var(--transition-base) ease-out;
+}
+
+.animate-slide-in {
+    animation: slideInRight var(--transition-base) ease-out;
+}
+
+/* === UTILITY CLASSES === */
+.gradient-text {
+    background: linear-gradient(135deg, var(--brand-blue-500), var(--brand-blue-300));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.shadow-glow-blue {
+    box-shadow: 0 0 30px rgba(4, 102, 200, 0.4);
+}
+
+/* === TYPOGRAPHY === */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--brand-dark-700);
+}
+
+p {
+    line-height: 1.6;
+    color: var(--brand-dark-700);
+}

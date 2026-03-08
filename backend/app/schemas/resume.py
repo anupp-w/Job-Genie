@@ -1,0 +1,39 @@
+from typing import List, Optional
+from pydantic import BaseModel
+
+
+class ResumeSectionBase(BaseModel):
+    section_type: str
+    content: str
+    order: int | None = 0
+
+
+class ResumeSectionCreate(ResumeSectionBase):
+    pass
+
+
+class ResumeSectionResponse(ResumeSectionBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class ResumeCreate(BaseModel):
+    title: Optional[str] = "My Resume"
+    file_path: Optional[str] = None
+    parsed_content: Optional[str] = None
+    ats_score: int | None = 0
+    sections: List[ResumeSectionCreate] = []
+
+
+class ResumeResponse(BaseModel):
+    id: int
+    title: str
+    file_path: Optional[str] = None
+    parsed_content: Optional[str] = None
+    ats_score: int
+    sections: List[ResumeSectionResponse] = []
+
+    class Config:
+        from_attributes = True
