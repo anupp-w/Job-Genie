@@ -39,6 +39,15 @@ frontend/.pnpm-debug.log*
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 
-# User Exclusions
-"reference inspo/"
+# Temporary scripts and logs
+frontend/*.ps1
+backend/*.txt
+*.txt
+*.log
+
+# Personal files
+Anup Wagle - Resume.*
+
+# Reference
+reference inspo/
 README.md

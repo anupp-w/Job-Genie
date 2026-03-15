@@ -6,4 +6,6 @@ from .resume import (
 	ResumeResponse,
 	ResumeSectionCreate,
 	ResumeSectionResponse,
+	TailorRequest,
+	TailorResponse,
 )

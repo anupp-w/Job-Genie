@@ -18,7 +18,7 @@ def send_reset_code_email(email_to: str, reset_code: str):
     If you did not request a password reset, please ignore this email.
     
     Thanks,
-    The Job Genie Team
+    Job Genie
     """
 
     # If SMTP is not configured, just print to console (useful for local testing)

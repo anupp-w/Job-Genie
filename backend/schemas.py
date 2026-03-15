@@ -26,3 +26,9 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+
+class TailorRequest(BaseModel):
+    resume_data: dict
+    job_description: Optional[str] = None
+    job_url: Optional[str] = None
+    resume_id: Optional[int] = None

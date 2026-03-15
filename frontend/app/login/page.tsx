@@ -15,7 +15,7 @@ export default function Login() {
     });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    
+
     // Global Show Password state for main form
     const [showPassword, setShowPassword] = useState(false);
 
@@ -196,7 +196,7 @@ export default function Login() {
                                 value={formData.password}
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             />
-                            <button 
+                            <button
                                 type="button"
                                 onClick={() => setShowPassword(!showPassword)}
                                 className="absolute right-3 top-1/2 -translate-y-1/2"
@@ -236,7 +236,7 @@ export default function Login() {
             {forgotOpen && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 animate-scale-in">
-                        
+
                         {forgotStep === 1 && (
                             <>
                                 <div className="flex items-center justify-between">
@@ -318,7 +318,7 @@ export default function Login() {
                                                 value={forgotData.new_password}
                                                 onChange={(e) => setForgotData({ ...forgotData, new_password: e.target.value })}
                                             />
-                                            <button 
+                                            <button
                                                 type="button"
                                                 onClick={() => setShowForgotNewPassword(!showForgotNewPassword)}
                                                 className="absolute right-3 top-1/2 -translate-y-1/2"
@@ -329,7 +329,7 @@ export default function Login() {
                                     </div>
 
                                     {forgotError && <p className="text-sm text-red-600">{forgotError}</p>}
-                                    
+
                                     <div className="flex items-center gap-2 justify-end pt-2">
                                         <Button type="button" variant="ghost" onClick={() => setForgotStep(1)}>
                                             Back
@@ -351,7 +351,7 @@ export default function Login() {
                                 </div>
                                 <h2 className="text-xl font-bold text-gray-900">Password Reset!</h2>
                                 <p className="text-gray-500 mb-6">Your password has been successfully updated. You can now login with your new credentials.</p>
-                                <Button 
+                                <Button
                                     className="w-full"
                                     onClick={() => {
                                         setFormData((prev) => ({ ...prev, password: forgotData.new_password }));

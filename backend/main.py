@@ -21,18 +21,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
+@app.get("/api/v1/")
 def read_root():
     return {"status": "ok", "message": "Job Genie Backend is Running"}
 
-@app.post("/signup", response_model=schemas.UserResponse)
+@app.post("/api/v1/users/signup", response_model=schemas.UserResponse)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db_user = crud.get_user_by_email(db, email=user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     return crud.create_user(db=db, user=user)
 
-@app.post("/token", response_model=schemas.Token)
+@app.post("/api/v1/auth/token", response_model=schemas.Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = crud.get_user_by_email(db, email=form_data.username)
     if not user or not crud.verify_password(form_data.password, user.password_hash):
@@ -47,11 +47,11 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/users/me", response_model=schemas.UserResponse)
+@app.get("/api/v1/users/me", response_model=schemas.UserResponse)
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
 
-@app.get("/health")
+@app.get("/api/v1/health")
 def health_check():
     from database import SessionLocal
     from sqlalchemy import text
@@ -63,6 +63,25 @@ def health_check():
         return {"status": "unhealthy", "database": str(e)}
     finally:
         db.close()
+
+@app.post("/api/v1/tailor")
+async def tailor_resume(request: schemas.TailorRequest):
+    from app.services.tailor_service import tailor_resume_to_jd
+    try:
+        result = await tailor_resume_to_jd(request.resume_data, request.job_description)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from fastapi import UploadFile, File
+@app.post("/api/v1/parse")
+async def parse_resume_endpoint(file: UploadFile = File(...)):
+    from app.services.parsing_service import parse_resume_upload
+    try:
+        data = await parse_resume_upload(file)
+        return {"parsed_data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse resume: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 
 from app import crud, schemas, models
@@ -35,3 +35,22 @@ def get_resume(
     if not resume:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
     return resume
+
+
+@router.post("/parse")
+async def parse_resume_endpoint(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(deps.get_current_user),
+):
+    """
+    Upload a resume PDF and get structured JSON data.
+    """
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    from app.services.parsing_service import parse_resume_upload
+    try:
+        parsed_data = await parse_resume_upload(file)
+        return parsed_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
