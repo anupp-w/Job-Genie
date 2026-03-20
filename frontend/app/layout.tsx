@@ -5,6 +5,10 @@ import "../styles/design-system.css";
 export const metadata: Metadata = {
   title: "Job Genie - AI-Powered Career Platform",
   description: "Transform your career with AI-powered resume optimization, job matching, and interview preparation.",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
