@@ -6,11 +6,25 @@ from passlib.context import CryptContext
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+MAX_PASSWORD_BYTES = 72  # bcrypt limit
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    # bcrypt rejects passwords >72 bytes; fail fast to avoid 500s
+    if plain_password is None:
+        return False
+    if len(plain_password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return False
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except ValueError:
+        # Covers bcrypt backend errors (e.g., wrap bug detection)
+        return False
+
 
 def get_password_hash(password: str) -> str:
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise ValueError("Password too long for bcrypt (max 72 bytes)")
     return pwd_context.hash(password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):

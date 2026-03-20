@@ -29,6 +29,7 @@ class Resume(Base):
     user = relationship("User", back_populates="resumes")
     sections = relationship("ResumeSection", back_populates="resume", cascade="all, delete-orphan")
     job_scores = relationship("ResumeJobScore", back_populates="resume", cascade="all, delete-orphan")
+    skills = relationship("ResumeSkill", back_populates="resume", cascade="all, delete-orphan")
 
 class ResumeSection(Base):
     __tablename__ = "resume_sections"
@@ -49,6 +50,7 @@ class Job(Base):
     source = Column(String, default="manual")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resume_scores = relationship("ResumeJobScore", back_populates="job")
+    job_skills = relationship("JobSkill", back_populates="job", cascade="all, delete-orphan")
 
 class ResumeJobScore(Base):
     __tablename__ = "resume_job_scores"
@@ -61,11 +63,36 @@ class ResumeJobScore(Base):
     resume = relationship("Resume", back_populates="job_scores")
     job = relationship("Job", back_populates="resume_scores")
 
+class JobSkill(Base):
+    __tablename__ = "job_skills"
+    job_id = Column(Integer, ForeignKey("jobs.id"), primary_key=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), primary_key=True)
+    importance_weight = Column(Integer, default=1)
+    job = relationship("Job", back_populates="job_skills")
+    skill = relationship("Skill", back_populates="job_skills")
+
+class ResumeSkill(Base):
+    __tablename__ = "resume_skills"
+    resume_id = Column(Integer, ForeignKey("resumes.id"), primary_key=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), primary_key=True)
+    resume = relationship("Resume", back_populates="skills")
+    skill = relationship("Skill", back_populates="resume_skills")
+
+class CourseSkill(Base):
+    __tablename__ = "course_skills"
+    course_id = Column(Integer, ForeignKey("courses.id"), primary_key=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), primary_key=True)
+    course = relationship("Course", back_populates="course_skills")
+    skill = relationship("Skill", back_populates="course_skills")
+
 class Skill(Base):
     __tablename__ = "skills"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
     category = Column(String)
+    job_skills = relationship("JobSkill", back_populates="skill")
+    resume_skills = relationship("ResumeSkill", back_populates="skill")
+    course_skills = relationship("CourseSkill", back_populates="skill")
 
 class Course(Base):
     __tablename__ = "courses"
@@ -75,6 +102,12 @@ class Course(Base):
     url = Column(String)
     thumbnail_url = Column(String)
     rating = Column(Float)
+    level = Column(String)
+    duration = Column(String)
+    institution = Column(String)
+    description = Column(Text)
+    category = Column(String)
+    course_skills = relationship("CourseSkill", back_populates="course", cascade="all, delete-orphan")
 
 class InterviewQuestion(Base):
     __tablename__ = "interview_questions"

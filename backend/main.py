@@ -83,6 +83,94 @@ async def parse_resume_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse resume: {str(e)}")
 
+@app.get("/api/v1/analysis/skill-gap/{resume_id}/{job_id}", response_model=schemas.SkillGapResponse)
+def get_skill_gap_endpoint(resume_id: int, job_id: int, db: Session = Depends(get_db)):
+    from app.services.analysis_service import get_skill_gap
+    return get_skill_gap(db, resume_id, job_id)
+
+@app.get("/api/v1/analysis/roadmap/{resume_id}/{job_id}", response_model=schemas.RoadmapResponse)
+def get_roadmap_endpoint(resume_id: int, job_id: int, db: Session = Depends(get_db)):
+    from app.services.analysis_service import get_skill_gap, generate_roadmap
+    gap_data = get_skill_gap(db, resume_id, job_id)
+    roadmap = generate_roadmap(db, gap_data["gaps"])
+    return {
+        "resume_id": resume_id,
+        "job_id": job_id,
+        "roadmap": roadmap
+    }
+
+@app.post("/api/v1/analysis/analyze-new")
+async def analyze_new_endpoint(
+    db: Session = Depends(get_db),
+    file: UploadFile = File(None),
+    job_description: str = "Software Engineer", # Fallback default
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    from app.services.parsing_service import parse_resume_upload
+    from app.services.analysis_service import get_skill_gap
+    import json
+    
+    # 1. Parse Resume if provided
+    resume_data = {}
+    if file:
+        resume_data = await parse_resume_upload(file)
+    
+    # 2. Create Resume Record
+    new_resume = models.Resume(
+        user_id=current_user.id,
+        title=f"Analysis - {file.filename if file else 'Input'}",
+        parsed_content=json.dumps(resume_data)
+    )
+    db.add(new_resume)
+    db.flush()
+    
+    # 3. Extract and Link Resume Skills
+    # Flatten skills from JSON
+    skills_list = []
+    if "skills" in resume_data:
+        # Check if it's a list (new schema) or object (old schema)
+        if isinstance(resume_data["skills"], list):
+            for cat in resume_data["skills"]:
+                skills_list.extend(cat.get("items", []))
+        elif isinstance(resume_data["skills"], dict):
+            for cat, items in resume_data["skills"].items():
+                if isinstance(items, list): skills_list.extend(items)
+                else: skills_list.append(str(items))
+
+    for skill_name in skills_list:
+        skill = db.query(models.Skill).filter(func.lower(models.Skill.name) == skill_name.lower()).first()
+        if not skill:
+            skill = models.Skill(name=skill_name)
+            db.add(skill)
+            db.flush()
+        
+        rs = models.ResumeSkill(resume_id=new_resume.id, skill_id=skill.id)
+        db.add(rs)
+
+    # 4. Create Job Record
+    new_job = models.Job(
+        title="Target Career Path",
+        description=job_description,
+        source="analysis"
+    )
+    db.add(new_job)
+    db.flush()
+    
+    # 5. Extract Job Skills (Light Heuristic for now)
+    job_words = set(job_description.lower().split())
+    all_skills = db.query(models.Skill).all()
+    for skill in all_skills:
+        if skill.name.lower() in job_description.lower():
+            js = models.JobSkill(job_id=new_job.id, skill_id=skill.id, importance_weight=5)
+            db.add(js)
+    
+    db.commit()
+    
+    return {
+        "resume_id": new_resume.id,
+        "job_id": new_job.id
+    }
+
 if __name__ == "__main__":
     import uvicorn
     # Bind to 0.0.0.0 to fix all localhost/network issues

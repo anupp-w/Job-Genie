@@ -1,4 +1,4 @@
-﻿from sqlalchemy import Column, Integer, String, ForeignKey, Text, Float
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, Float
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -43,6 +43,11 @@ class Course(Base):
     url = Column(String)
     thumbnail_url = Column(String)
     rating = Column(Float)
+    level = Column(String)
+    duration = Column(String)
+    institution = Column(String)
+    description = Column(Text)
+    category = Column(String)
 
     course_skills = relationship("CourseSkill", back_populates="course", cascade="all, delete-orphan")
 

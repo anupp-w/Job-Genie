@@ -1,6 +1,6 @@
 
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -32,3 +32,35 @@ class TailorRequest(BaseModel):
     job_description: Optional[str] = None
     job_url: Optional[str] = None
     resume_id: Optional[int] = None
+
+class SkillItem(BaseModel):
+    id: int
+    name: str
+    importance: int
+
+class SkillGapResponse(BaseModel):
+    resume_id: int
+    job_id: int
+    match_percentage: float
+    matches: List[SkillItem]
+    gaps: List[SkillItem]
+
+class CourseItem(BaseModel):
+    id: int
+    title: str
+    platform: str
+    url: str
+    level: str
+    rating: float
+    duration: str
+    institution: str
+
+class RoadmapItem(BaseModel):
+    skill_id: int
+    skill_name: str
+    courses: List[CourseItem]
+
+class RoadmapResponse(BaseModel):
+    resume_id: int
+    job_id: int
+    roadmap: List[RoadmapItem]
