@@ -48,6 +48,16 @@ backend/*.txt
 # Personal files
 Anup Wagle - Resume.*
 
+# Temporary executions and debug scripts
+test_*.py
+debug_*.py
+verify_*.py
+check_db.py
+update_db_schema*.py
+trigger_reset.py
+get_code.py
+
+
 # Reference
 reference inspo/
 README.md

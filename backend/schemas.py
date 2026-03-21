@@ -64,3 +64,46 @@ class RoadmapResponse(BaseModel):
     resume_id: int
     job_id: int
     roadmap: List[RoadmapItem]
+
+# --- Interview Engine Schemas ---
+from datetime import datetime
+
+class InterviewSessionCreate(BaseModel):
+    job_title: str
+    job_description: str
+
+class InterviewQuestionBase(BaseModel):
+    id: int
+    round: int
+    question_number: int
+    question_type: str
+    question_text: str
+
+    class Config:
+        from_attributes = True
+
+class InterviewSessionResponse(BaseModel):
+    id: int
+    job_title: str
+    status: str
+    round: int
+    created_at: datetime
+    questions: Optional[List[InterviewQuestionBase]] = []
+
+    class Config:
+        from_attributes = True
+
+class InterviewAnswerCreate(BaseModel):
+    user_answer: str
+
+class InterviewAnswerResponse(BaseModel):
+    id: int
+    question_id: int
+    user_answer: str
+    ideal_answer: Optional[str] = None
+    llm_feedback: Optional[str] = None
+    final_score: Optional[float] = None
+    score_breakdown: Optional[dict] = None
+
+    class Config:
+        from_attributes = True

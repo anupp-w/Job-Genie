@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     EMAILS_FROM_EMAIL: str = os.getenv("EMAILS_FROM_EMAIL", "no-reply@jobgenie.local")
     EMAILS_FROM_NAME: str = os.getenv("EMAILS_FROM_NAME", "Job Genie")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 
     class Config:
         case_sensitive = True

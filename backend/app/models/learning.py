@@ -9,11 +9,9 @@ class Skill(Base):
     name = Column(String, unique=True, index=True)
     category = Column(String)
 
-    questions = relationship("InterviewQuestion", back_populates="skill")
     job_skills = relationship("JobSkill", back_populates="skill")
     resume_skills = relationship("ResumeSkill", back_populates="skill")
     course_skills = relationship("CourseSkill", back_populates="skill")
-    smart_sentences = relationship("SmartSentence", back_populates="skill")
 
 class JobSkill(Base):
     __tablename__ = "job_skills"

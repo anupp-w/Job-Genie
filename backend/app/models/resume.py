@@ -1,4 +1,4 @@
-﻿from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base_class import Base
@@ -43,13 +43,3 @@ class ResumeJobScore(Base):
 
     resume = relationship("Resume", back_populates="job_scores")
     job = relationship("Job", back_populates="resume_scores")
-
-class SmartSentence(Base):
-    __tablename__ = "smart_sentences"
-
-    id = Column(Integer, primary_key=True, index=True)
-    skill_id = Column(Integer, ForeignKey("skills.id"))
-    weak_phrase = Column(String)
-    strong_phrase = Column(String)
-    
-    skill = relationship("Skill", back_populates="smart_sentences")

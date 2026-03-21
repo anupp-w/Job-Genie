@@ -1,208 +1,228 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
-  PlayCircle,
-  Mic,
-  MessageCircle,
-  ClipboardList,
-  Timer,
-  CheckCircle2,
-  Star,
-  Repeat,
-  BookOpen
+  PlayCircle, MessageCircle, ClipboardList, CheckCircle2, Star, Loader2, Calendar, FileText, ArrowRight
 } from "lucide-react";
-
-const queueQuestions = [
-  { id: 1, label: "Behavioral", text: "Tell me about a time you led a project under a tight deadline." },
-  { id: 2, label: "Behavioral", text: "Describe a conflict with a teammate and how you resolved it." },
-  { id: 3, label: "Behavioral", text: "When did you fail, and what did you learn?" },
-  { id: 4, label: "Behavioral", text: "How do you prioritize tasks when everything is urgent?" },
-  { id: 5, label: "Behavioral", text: "Give an example of delivering feedback that landed well." },
-  { id: 6, label: "Behavioral", text: "Walk through a time you influenced without authority." },
-  { id: 7, label: "Technical", text: "Explain how you would design a rate limiter for an API." },
-  { id: 8, label: "Technical", text: "How do you optimize a slow React page?" },
-  { id: 9, label: "Technical", text: "Describe your debugging process for intermittent prod bugs." },
-  { id: 10, label: "Technical", text: "How would you structure state management for a dashboard?" }
-];
-
-const recentSessions = [
-  {
-    id: 1,
-    title: "Frontend Engineer Mock",
-    score: 86,
-    date: "Feb 14",
-    highlights: "Strong STAR structure; tighten technical depth on performance tuning"
-  },
-  {
-    id: 2,
-    title: "Behavioral Deep Dive",
-    score: 90,
-    date: "Feb 11",
-    highlights: "Great storytelling; add metrics earlier in answers"
-  }
-];
+import api from "@/services/api";
 
 export default function InterviewsPage() {
+  const router = useRouter();
+  
+  // State for form
+  const [showForm, setShowForm] = useState(false);
+  const [jobTitle, setJobTitle] = useState("");
+  const [seniority, setSeniority] = useState("Junior");
+  const [jobDescription, setJobDescription] = useState("");
+  
+  // State for application
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  // Fetch true history from the backend
+  useEffect(() => {
+    async function fetchHistory() {
+      try {
+        setHistoryLoading(true);
+        // GET /api/v1/interviews fetches all user interviews
+        const res = await api.get("/interviews/");
+        setHistory(res.data);
+      } catch (err) {
+        console.error("Failed to load interview history", err);
+      } finally {
+        setHistoryLoading(false);
+      }
+    }
+    fetchHistory();
+  }, []);
+
+  const handleStartInterview = async () => {
+    if (!jobTitle.trim() || !jobDescription.trim()) {
+      setError("Please provide both a Job Title and Description.");
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      setError("");
+      
+      const res = await api.post("/interviews/new", {
+        job_title: `${seniority} ${jobTitle}`.trim(),
+        job_description: jobDescription
+      });
+      
+      router.push(`/dashboard/interviews/${res.data.id}`);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.response?.data?.detail || "Failed to start interview session.");
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-[20px] font-semibold tracking-tight text-[var(--foreground)]">Interview Coach</h1>
-          <p className="text-sm text-[var(--muted)] mt-1">Start a mock aligned to your target role, get 6 behavioral + 4 technical questions, then score + model answers.</p>
+          <h1 className="text-[24px] font-bold tracking-tight text-[var(--foreground)]">Interview Engine</h1>
+          <p className="text-sm text-[var(--muted)] mt-1">Practice dynamically generated mock interviews tailored accurately to your target role.</p>
         </div>
-        <button className="flex items-center gap-2 bg-[var(--accent-2)] hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm transition-all hover:scale-105 active:scale-95">
-          <PlayCircle className="w-5 h-5" />
-          Start New Session
-        </button>
+        {!showForm && (
+          <button 
+            onClick={() => setShowForm(true)}
+            className="flex items-center justify-center gap-2 bg-[var(--accent-2)] hover:bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold shadow-sm transition-all hover:scale-105 active:scale-95"
+          >
+            <PlayCircle className="w-5 h-5" />
+            Start New Session
+          </button>
+        )}
       </div>
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-
-        {/* Left: Start a new interview */}
-        <div className="xl:col-span-2 space-y-6">
-          <section className="surface-panel p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <h2 className="text-[16px] font-semibold text-[var(--foreground)]">Create a mock interview</h2>
-                <p className="text-sm text-[var(--muted)] mt-1">Enter the role you’re targeting and a short description. You’ll get 10 questions (6 behavioral, 4 technical), graded with best-fit answers.</p>
-              </div>
-              <div className="p-3 rounded-full bg-indigo-500/10 text-indigo-600">
-                <MessageCircle className="w-5 h-5" />
-              </div>
+      {showForm ? (
+        <section className="surface-panel p-6 shadow-sm border border-[var(--border)] rounded-2xl animate-in slide-in-from-top-4 duration-300">
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-[18px] font-semibold text-[var(--foreground)]">Create Mock Interview</h2>
+              <p className="text-sm text-[var(--muted)] mt-1">Paste your target job description. We'll instantly calibrate a 10-question technical & behavioral loop.</p>
             </div>
+            <button 
+              onClick={() => setShowForm(false)}
+              className="text-sm font-medium text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex flex-col gap-2">
-                <label className="text-[12px] text-[var(--muted)]">Job Title</label>
-                <input
-                  className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30"
-                  placeholder="e.g., Frontend Engineer"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-[12px] text-[var(--muted)]">Seniority</label>
-                <select className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30">
-                  <option>Junior</option>
-                  <option>Mid</option>
-                  <option>Senior</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2 mt-4">
-              <label className="text-[12px] text-[var(--muted)]">Job Description / Focus</label>
-              <textarea
-                rows={4}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30"
-                placeholder="Paste a brief description or the key responsibilities you want to target"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <label className="text-[12px] font-semibold tracking-wide uppercase text-[var(--muted)]">Job Title</label>
+              <input
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30 transition-shadow"
+                placeholder="e.g., Frontend Engineer"
               />
             </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-[12px] font-semibold tracking-wide uppercase text-[var(--muted)]">Seniority</label>
+              <select 
+                value={seniority}
+                onChange={(e) => setSeniority(e.target.value)}
+                className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30 cursor-pointer"
+              >
+                <option>Intern / Entry-Level</option>
+                <option>Junior</option>
+                <option>Mid-Level</option>
+                <option>Senior</option>
+                <option>Lead / Principal</option>
+              </select>
+            </div>
+          </div>
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mt-5">
-              <div className="flex items-center gap-3 text-[12px] text-[var(--muted)]">
-                <ClipboardList className="w-4 h-4" />
-                10 questions total • 6 behavioral • 4 technical • Scores + model answers
+          <div className="flex flex-col gap-2 mt-4">
+            <label className="text-[12px] font-semibold tracking-wide uppercase text-[var(--muted)]">Job Description / Focus</label>
+            <textarea
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
+              rows={5}
+              className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30 transition-shadow resize-none"
+              placeholder="Paste the key responsibilities, requirements, or focus areas from the job posting..."
+            />
+          </div>
+
+          {error && <p className="text-rose-500 text-sm mt-3 font-medium bg-rose-500/10 p-3 rounded-lg border border-rose-500/20">{error}</p>}
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mt-6 pt-4 border-t border-[var(--border)]">
+            <div className="flex items-center gap-2 text-[12px] text-[var(--muted)] font-medium">
+              <ClipboardList className="w-4 h-4 text-emerald-500" />
+              This will generate exactly 10 questions (Behavioral + Technical) based precisely on the role.
+            </div>
+            <button 
+              onClick={handleStartInterview}
+              disabled={loading}
+              className="inline-flex flex-shrink-0 items-center justify-center gap-2 bg-[var(--accent-2)] hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl text-[14px] font-semibold transition-all shadow-sm hover:scale-105 active:scale-95"
+            >
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
+              {loading ? "Initializing Environment..." : "Start Interview Loop"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {/* History Grid */}
+      {!showForm && (
+        <div className="space-y-4 animate-in fade-in duration-500">
+          <h2 className="text-[18px] font-semibold text-[var(--foreground)] flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-[var(--muted)]" />
+            Your Live Interview History
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {historyLoading ? (
+              <div className="col-span-full py-16 flex flex-col items-center justify-center border border-[var(--border)] border-dashed rounded-2xl bg-[var(--surface-1)]">
+                <Loader2 className="w-8 h-8 animate-spin text-[var(--muted)] mb-3" />
+                <p className="text-[var(--muted)] font-medium">Loading your past sessions...</p>
               </div>
-              <button className="inline-flex items-center gap-2 bg-[var(--accent-2)] hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-[14px] font-medium transition-colors shadow-sm">
-                <PlayCircle className="w-4 h-4" />
-                Start interview
-              </button>
-            </div>
-          </section>
-
-          {/* Question queue preview */}
-          <section className="surface-panel p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[16px] font-semibold text-[var(--foreground)]">This session’s 10-question queue</h2>
-              <span className="text-[12px] text-[var(--muted)] flex items-center gap-2">
-                <Timer className="w-4 h-4" />
-                Adaptive ordering, no job scraping needed
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {queueQuestions.map((q) => (
-                <div key={q.id} className="p-4 rounded-lg bg-[var(--surface-2)] border border-[var(--border)]">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[12px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 border border-indigo-100">{q.label}</span>
-                    <span className="text-[10px] text-[var(--muted)]">Q{q.id}</span>
+            ) : history.length === 0 ? (
+              <div className="col-span-full py-16 flex flex-col items-center justify-center border border-[var(--border)] border-dashed rounded-2xl bg-[var(--surface-1)]">
+                <FileText className="w-8 h-8 text-[var(--muted)] mb-3 opacity-50" />
+                <p className="text-[var(--muted)] font-medium">No past interview sessions found.</p>
+                <button 
+                  onClick={() => setShowForm(true)}
+                  className="mt-3 text-indigo-500 font-semibold hover:underline text-sm"
+                >
+                  Start your first mock interview
+                </button>
+              </div>
+            ) : (
+              history.map((session: any) => (
+                <div 
+                  key={session.id} 
+                  onClick={() => router.push(session.status === "completed" ? `/dashboard/interviews/${session.id}/results` : `/dashboard/interviews/${session.id}`)}
+                  className="p-5 rounded-2xl bg-[var(--surface-1)] border border-[var(--border)] hover:border-indigo-500/50 hover:shadow-md transition-all cursor-pointer group flex flex-col"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span 
+                      className={`text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md ${
+                        session.status === "completed" 
+                          ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                          : "bg-indigo-500/10 text-indigo-500 border border-indigo-500/20"
+                      }`}
+                    >
+                      {session.status === "completed" ? "Completed" : "In Progress"}
+                    </span>
+                    <span className="text-xs text-[var(--muted)] font-medium">
+                      {new Date(session.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
                   </div>
-                  <p className="text-[14px] text-[var(--foreground)] leading-snug">{q.text}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        {/* Right: Progress + history */}
-        <div className="space-y-6">
-          <div className="p-6 rounded-2xl surface-panel shadow-sm">
-            <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-4">Run summary</h3>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-3 rounded-full bg-emerald-500/10 text-emerald-600">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-[14px] font-medium text-[var(--foreground)]">10/10 questions queued</p>
-                <p className="text-[12px] text-[var(--muted)]">6 behavioral • 4 technical • RAG uses your inputs only</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-[12px] text-[var(--muted)]">
-                <span>Behavioral coverage</span>
-                <span>6</span>
-              </div>
-              <div className="w-full bg-[var(--surface-2)] rounded-full h-1.5">
-                <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: "60%" }}></div>
-              </div>
-              <div className="flex items-center justify-between text-[12px] text-[var(--muted)]">
-                <span>Technical coverage</span>
-                <span>4</span>
-              </div>
-              <div className="w-full bg-[var(--surface-2)] rounded-full h-1.5">
-                <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: "40%" }}></div>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6 rounded-2xl surface-panel shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[14px] font-semibold text-[var(--foreground)]">Recent sessions</h3>
-              <button className="text-[12px] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors flex items-center gap-1">
-                <Repeat className="w-4 h-4" />
-                Try again
-              </button>
-            </div>
-            <div className="space-y-4">
-              {recentSessions.map((session) => (
-                <div key={session.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-[12px] text-[var(--muted)]">{session.date}</div>
-                    <div className="flex items-center gap-1 text-[14px] font-semibold text-emerald-600">
-                      <Star className="w-4 h-4 fill-emerald-500 text-emerald-500" />
-                      {session.score}
-                    </div>
+                  
+                  <h3 className="text-[16px] font-semibold text-[var(--foreground)] mb-1 group-hover:text-indigo-500 transition-colors line-clamp-1">
+                    {session.job_title}
+                  </h3>
+                  
+                  <div className="mt-auto pt-4 flex items-center justify-between">
+                    {session.status === "completed" ? (
+                      <div className="flex items-center gap-1.5 text-sm font-semibold text-[var(--foreground)]">
+                        <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
+                        View Scorecard
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-sm font-medium text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+                        Continue Session
+                      </div>
+                    )}
+                    <ArrowRight className="w-4 h-4 text-[var(--muted)] group-hover:text-indigo-500 group-hover:-rotate-45 transition-all" />
                   </div>
-                  <p className="text-[14px] font-medium text-[var(--foreground)]">{session.title}</p>
-                  <p className="text-[12px] text-[var(--muted)] mt-1 leading-snug">{session.highlights}</p>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-6 rounded-2xl surface-panel shadow-sm">
-            <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Tips for higher scores</h3>
-            <ul className="space-y-3 text-[12px] text-[var(--muted)]">
-              <li className="flex gap-2"><BookOpen className="w-4 h-4 text-indigo-500" /> Use STAR for all behavioral answers; lead with the metric.</li>
-              <li className="flex gap-2"><Mic className="w-4 h-4 text-indigo-500" /> Keep answers under 2 minutes; outline first, then dive.</li>
-              <li className="flex gap-2"><MessageCircle className="w-4 h-4 text-indigo-500" /> Mirror the job description keywords in your answers—no job scraping needed, just your input.</li>
-            </ul>
+              ))
+            )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

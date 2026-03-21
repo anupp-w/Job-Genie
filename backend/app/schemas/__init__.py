@@ -9,3 +9,11 @@ from .resume import (
 	TailorRequest,
 	TailorResponse,
 )
+
+from .interview import (
+    InterviewSessionCreate,
+    InterviewQuestionBase,
+    InterviewSessionResponse,
+    InterviewAnswerCreate,
+    InterviewAnswerResponse,
+)
