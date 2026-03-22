@@ -56,7 +56,13 @@ check_db.py
 update_db_schema*.py
 trigger_reset.py
 get_code.py
+database_dump.txt
+refactor_plan.md
+setup_anup.py
+create_specific_user.py
 
+# workflow-agents
+.agents/
 
 # Reference
 reference inspo/

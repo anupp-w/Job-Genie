@@ -1,67 +1,93 @@
-from sentence_transformers import SentenceTransformer
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+import logging
 import re
 
-# Load model once at startup - will download ~80MB on first run
-model = SentenceTransformer('all-MiniLM-L6-v2')
+# Configure logging
+logger = logging.getLogger(__name__)
 
-WEIGHTS = {
-    'behavioral': { 'semantic': 0.55, 'keyword': 0.25, 'length': 0.20 },
-    'technical':  { 'semantic': 0.40, 'keyword': 0.45, 'length': 0.15 }
-}
+# Download NLTK data (run once)
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('tokenizers/punkt_tab')
+    nltk.data.find('corpora/stopwords')
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    logger.info("Downloading NLTK data...")
+    nltk.download('punkt')
+    nltk.download('punkt_tab')
+    nltk.download('stopwords')
+    nltk.download('wordnet')
 
-def semantic_score(ideal_answer: str, user_answer: str) -> float:
-    if not user_answer or not user_answer.strip():
-        return 0.0
-    embeddings = model.encode([ideal_answer, user_answer])
-    similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
-    similarity = max(float(similarity), 0.0)  # clamp negatives
-    return round(similarity * 10, 2)           # scale to 0-10
-
-def extract_tfidf_keywords(job_description: str, question: str, top_n: int = 12):
-    corpus = [job_description, question]
-    vectorizer = TfidfVectorizer(
-        stop_words='english',
-        ngram_range=(1, 2),
-        max_features=100
-    )
-    vectorizer.fit(corpus)
-    tfidf_matrix = vectorizer.transform(corpus)
-    scores = np.asarray(tfidf_matrix.sum(axis=0)).flatten()
-    top_indices = scores.argsort()[::-1][:top_n]
-    return [vectorizer.get_feature_names_out()[i] for i in top_indices]
-
-def keyword_coverage_score(keywords, user_answer):
-    if not keywords:
-        return 5.0, [], []
-    answer_clean = re.sub(r'[^\w\s]', ' ', user_answer.lower())
-    matched = [kw for kw in keywords if kw.lower() in answer_clean]
-    missing = [kw for kw in keywords if kw.lower() not in answer_clean]
-    coverage = len(matched) / len(keywords)
-    return round(coverage * 10, 2), matched, missing
-
-def hybrid_score(ideal_answer: str, user_answer: str, job_description: str, question: str, question_type: str):
-    q_type = question_type.lower() if question_type else 'behavioral'
-    if q_type not in WEIGHTS:
-        q_type = 'behavioral'
-
-    s = semantic_score(ideal_answer, user_answer)
-    keywords = extract_tfidf_keywords(job_description, question)
-    k, matched, missing = keyword_coverage_score(keywords, user_answer)
+def score_answer_nlp(user_answer: str, ideal_answer: str, keywords: list[str], question_type: str) -> dict:
+    lemmatizer = WordNetLemmatizer()
+    stop_words = set(stopwords.words('english'))
     
-    # Length score proxy: assume 80 words is an optimal short concise answer
-    word_count = len(user_answer.split())
-    l = min(word_count / 80, 1.0) * 10
+    # Preprocessing
+    def clean_text(text: str) -> str:
+        if not text: return ""
+        tokens = word_tokenize(text.lower())
+        return ' '.join([lemmatizer.lemmatize(w) for w in tokens if w.isalpha() and w not in stop_words])
+
+    processed_user = clean_text(user_answer)
+    processed_ideal = clean_text(ideal_answer)
+    processed_kws = [lemmatizer.lemmatize(k.lower()) for k in keywords] if keywords else []
+
+    # NLP Metric 1: Keyword Coverage (with lemmatization)
+    matched = []
+    # Check both raw and processed for better matching
+    user_words = set(processed_user.split()) | set(user_answer.lower().split())
     
-    w = WEIGHTS[q_type]
-    final = w['semantic']*s + w['keyword']*k + w['length']*l
+    for k in processed_kws:
+        if k in user_words:
+            matched.append(k)
+        # Fallback: simple string match if lemmatization failed on specific terms
+        elif k in processed_user:
+            matched.append(k)
+    
+    kw_score = round((len(matched) / len(keywords)) * 10, 1) if keywords and len(keywords) > 0 else 5.0
+
+    # NLP Metric 2: TF-IDF Cosine Similarity
+    sem_score = 0.0
+    if processed_user and processed_ideal:
+        try:
+            vectorizer = TfidfVectorizer()
+            tfidf_matrix = vectorizer.fit_transform([processed_user, processed_ideal])
+            # tfidf_matrix is (2, vocab_size). 
+            # We want similarity between row 0 and row 1.
+            cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+            
+            # Similarity is usually 0-1, so scale to 0-10. 
+            # A similarity of 0.4+ is generally good for short text, so we'll be generous with scaling.
+            sem_score = min(round(cosine_sim * 16, 1), 10.0)
+        except ValueError:
+            # Handle empty vocab or other tfidf errors (e.g. stop words removed everything)
+            sem_score = 0.0
+
+    # NLP Metric 3: Length (Basic)
+    try:
+        word_count = len(word_tokenize(user_answer))
+    except:
+        word_count = len(user_answer.split())
+        
+    len_score = min(round((word_count / 80) * 10, 1), 10.0)
+
+    if question_type == "behavioral":
+        w = {"s": 0.55, "k": 0.25, "l": 0.20}
+    else:
+        w = {"s": 0.40, "k": 0.45, "l": 0.15}
+
+    final = round(w["s"] * sem_score + w["k"] * kw_score + w["l"] * len_score, 1)
+
     return {
-        'final_score': round(final, 1),
-        'semantic_score': s, 
-        'keyword_score': k, 
-        'length_score': round(l, 2),
-        'matched_keywords': matched, 
-        'missing_keywords': missing
+        "final_score": final,
+        "semantic_score": sem_score,
+        "keyword_score": kw_score,
+        "length_score": len_score,
+        "matched_keywords": matched,
+        "missing_keywords": [k for k in processed_kws if k not in matched],
     }

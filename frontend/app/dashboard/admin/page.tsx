@@ -11,7 +11,8 @@ import {
   Shield, 
   User as UserIcon,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  X
 } from 'lucide-react';
 
 interface User {
@@ -29,6 +30,7 @@ export default function AdminPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   useEffect(() => {
     fetchUsers();
@@ -84,9 +86,9 @@ export default function AdminPage() {
     }
   };
 
-  const deleteUser = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
-    
+  const confirmDeleteUser = async () => {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
     setActionLoading(id);
     try {
       const token = localStorage.getItem('token');
@@ -98,6 +100,7 @@ export default function AdminPage() {
       setError('Failed to delete user');
     } finally {
       setActionLoading(null);
+      setDeleteTarget(null);
     }
   };
 
@@ -217,7 +220,7 @@ export default function AdminPage() {
                         {actionLoading === user.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
                       </button>
                       <button
-                        onClick={() => deleteUser(user.id)}
+                        onClick={() => setDeleteTarget(user)}
                         disabled={actionLoading === user.id}
                         className="p-2 text-[var(--muted)] hover:text-red-600 hover:bg-red-50 rounded-lg transition-all title='Delete User'"
                       >
@@ -238,6 +241,43 @@ export default function AdminPage() {
           </table>
         </div>
       </div>
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-start justify-between">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+              </div>
+              <button onClick={() => setDeleteTarget(null)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Delete user</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Are you sure you want to delete <strong>{deleteTarget.full_name}</strong> ({deleteTarget.email})? This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 justify-end pt-2">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteUser}
+                disabled={actionLoading === deleteTarget.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {actionLoading === deleteTarget.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -58,8 +58,22 @@ export default function Login() {
             await persistSession(formData.email, formData.password);
             router.push('/dashboard');
         } catch (err: any) {
-            const msg = err.response?.data?.detail || err.message || 'Login failed';
-            setError(typeof msg === 'string' ? msg : 'Login failed');
+            // Precise error messages based on status codes
+            const status = err.response?.status;
+            const detail = err.response?.data?.detail;
+
+            if (status === 401) {
+                setError('Incorrect email or password. Please try again.');
+            } else if (status === 503) {
+                setError('Database is temporarily unavailable. Please try again in a moment.');
+            } else if (status === 500) {
+                setError(typeof detail === 'string' ? detail : 'A server error occurred. Please try again later.');
+            } else if (err.code === 'ERR_NETWORK' || !err.response) {
+                setError('Cannot reach the server. Please check if the backend is running.');
+            } else {
+                const msg = typeof detail === 'string' ? detail : err.message || 'Login failed';
+                setError(msg);
+            }
         } finally {
             setLoading(false);
         }

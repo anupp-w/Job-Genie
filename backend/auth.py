@@ -9,7 +9,7 @@ import schemas, crud, database, models
 
 SECRET_KEY = "supersecretkey" # Move to env in prod
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 10080 # 7 days (was 30 mins)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 

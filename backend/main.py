@@ -25,6 +25,9 @@ app.add_middleware(
 def read_root():
     return {"status": "ok", "message": "Job Genie Backend is Running"}
 
+from app.api.v1.endpoints import interviews
+app.include_router(interviews.router, prefix="/api/v1/interviews", tags=["interviews"])
+
 @app.post("/api/v1/users/signup", response_model=schemas.UserResponse)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db_user = crud.get_user_by_email(db, email=user.email)
@@ -34,22 +37,122 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/auth/token", response_model=schemas.Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = crud.get_user_by_email(db, email=form_data.username)
-    if not user or not crud.verify_password(form_data.password, user.password_hash):
+    import traceback, logging
+    logger = logging.getLogger("jobgenie.auth")
+
+    # 1. Look up user — catch DB errors
+    try:
+        user = crud.get_user_by_email(db, email=form_data.username)
+    except Exception as e:
+        logger.error(f"Database error during login lookup: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is temporarily unavailable. Please try again.",
+        )
+
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = auth.create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+
+    # 2. Verify password — catch bcrypt / passlib errors
+    try:
+        password_valid = crud.verify_password(form_data.password, user.password_hash)
+    except Exception as e:
+        logger.error(f"Password verification error for {form_data.username}: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password verification failed due to a server error.",
+        )
+
+    if not password_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 3. Create JWT — catch encoding errors
+    try:
+        access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = auth.create_access_token(
+            data={"sub": user.email}, expires_delta=access_token_expires
+        )
+    except Exception as e:
+        logger.error(f"Token creation error for {form_data.username}: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create authentication token.",
+        )
+
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/api/v1/users/me", response_model=schemas.UserResponse)
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
+
+# --- Admin-only dependency ---
+def get_current_admin(current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
+
+from typing import Optional, List
+from pydantic import BaseModel
+
+class AdminUserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    profile_pic_url: Optional[str] = None
+
+@app.get("/api/v1/users", response_model=List[schemas.UserResponse])
+def list_all_users(
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(get_current_admin),
+    skip: int = 0,
+    limit: int = 100,
+):
+    """List all users. Admin only."""
+    return db.query(models.User).offset(skip).limit(limit).all()
+
+@app.patch("/api/v1/users/{user_id}", response_model=schemas.UserResponse)
+def admin_update_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(get_current_admin),
+):
+    """Update a user's role or profile. Admin only."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.full_name is not None:
+        user.full_name = payload.full_name
+    if payload.role is not None:
+        user.role = payload.role
+    if payload.profile_pic_url is not None:
+        user.profile_pic_url = payload.profile_pic_url
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.delete("/api/v1/users/{user_id}", response_model=schemas.UserResponse)
+def admin_delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(get_current_admin),
+):
+    """Delete a user. Admin only."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    db.delete(user)
+    db.commit()
+    return user
 
 @app.get("/api/v1/health")
 def health_check():
@@ -73,7 +176,7 @@ async def tailor_resume(request: schemas.TailorRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-from fastapi import UploadFile, File
+from fastapi import UploadFile, File, Form
 @app.post("/api/v1/parse")
 async def parse_resume_endpoint(file: UploadFile = File(...)):
     from app.services.parsing_service import parse_resume_upload
@@ -103,11 +206,12 @@ def get_roadmap_endpoint(resume_id: int, job_id: int, db: Session = Depends(get_
 async def analyze_new_endpoint(
     db: Session = Depends(get_db),
     file: UploadFile = File(None),
-    job_description: str = "Software Engineer", # Fallback default
+    job_description: str = Form("Software Engineer"),
     current_user: models.User = Depends(auth.get_current_user)
 ):
     from app.services.parsing_service import parse_resume_upload
-    from app.services.analysis_service import get_skill_gap
+    from app.services.llm import extract_skills_from_text
+    from sqlalchemy import func
     import json
     
     # 1. Parse Resume if provided
@@ -124,26 +228,32 @@ async def analyze_new_endpoint(
     db.add(new_resume)
     db.flush()
     
-    # 3. Extract and Link Resume Skills
-    # Flatten skills from JSON
-    skills_list = []
-    if "skills" in resume_data:
-        # Check if it's a list (new schema) or object (old schema)
+    # 3. Extract and Link Resume Skills (Using AI)
+    # Give the AI the parsed context (experience, projects, and initial skills)
+    resume_text_for_ai = json.dumps({
+        "experience": resume_data.get("experience", []),
+        "projects": resume_data.get("projects", []),
+        "skills": resume_data.get("skills", [])
+    })[:4000]
+    
+    resume_skills_ai = extract_skills_from_text(resume_text_for_ai) if resume_text_for_ai else []
+
+    # Fallback to existing parsed skills if AI fails
+    if not resume_skills_ai and "skills" in resume_data:
         if isinstance(resume_data["skills"], list):
             for cat in resume_data["skills"]:
-                skills_list.extend(cat.get("items", []))
+                resume_skills_ai.extend(cat.get("items", []))
         elif isinstance(resume_data["skills"], dict):
             for cat, items in resume_data["skills"].items():
-                if isinstance(items, list): skills_list.extend(items)
-                else: skills_list.append(str(items))
+                if isinstance(items, list): resume_skills_ai.extend(items)
+                else: resume_skills_ai.append(str(items))
 
-    for skill_name in skills_list:
+    for skill_name in set(resume_skills_ai):
         skill = db.query(models.Skill).filter(func.lower(models.Skill.name) == skill_name.lower()).first()
         if not skill:
-            skill = models.Skill(name=skill_name)
+            skill = models.Skill(name=skill_name[:255])
             db.add(skill)
             db.flush()
-        
         rs = models.ResumeSkill(resume_id=new_resume.id, skill_id=skill.id)
         db.add(rs)
 
@@ -156,13 +266,24 @@ async def analyze_new_endpoint(
     db.add(new_job)
     db.flush()
     
-    # 5. Extract Job Skills (Light Heuristic for now)
-    job_words = set(job_description.lower().split())
-    all_skills = db.query(models.Skill).all()
-    for skill in all_skills:
-        if skill.name.lower() in job_description.lower():
-            js = models.JobSkill(job_id=new_job.id, skill_id=skill.id, importance_weight=5)
-            db.add(js)
+    # 5. Extract Job Skills (Using AI deeply against JD)
+    job_skills_ai = extract_skills_from_text(job_description)
+    
+    # If LLM failed, fallback to basic keyword matching
+    if not job_skills_ai:
+        job_words = set(job_description.lower().split())
+        all_skills = db.query(models.Skill).all()
+        job_skills_ai = [s.name for s in all_skills if s.name.lower() in job_description.lower()]
+
+    for skill_name in set(job_skills_ai):
+        skill = db.query(models.Skill).filter(func.lower(models.Skill.name) == skill_name.lower()).first()
+        if not skill:
+            skill = models.Skill(name=skill_name[:255])
+            db.add(skill)
+            db.flush()
+        # Set a baseline importance weight (could be scaled up later)
+        js = models.JobSkill(job_id=new_job.id, skill_id=skill.id, importance_weight=5)
+        db.add(js)
     
     db.commit()
     

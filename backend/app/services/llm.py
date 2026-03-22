@@ -35,6 +35,19 @@ Also write one sentence of feedback on what makes a strong answer.
 Return ONLY a JSON object. No preamble.
 {{"ideal_answer": "...", "feedback": "..."}}"""
 
+SKILL_EXTRACTION_PROMPT = """You are an expert technical recruiter and AI.
+Analyze the following text (which could be a resume or a job description).
+Extract the core hard skills, technical skills, frameworks, languages, and tools mentioned.
+Limit the response to the 20 most important technical and soft skills.
+Return ONLY a JSON object with a "skills" array containing strings. No preamble.
+
+Text: {text}
+
+JSON Format:
+{{
+  "skills": ["React", "Node.js", "Python", "System Design", "AWS"]
+}}"""
+
 def generate_questions(job_title: str, job_description: str):
     prompt = QUESTION_PROMPT.format(job_title=job_title, job_description=job_description)
     try:
@@ -67,3 +80,20 @@ def generate_ideal_answer(job_title: str, question_type: str, question: str):
     except Exception as e:
         print(f"Error parsing LLM response for ideal answer: {e}")
         return {"ideal_answer": "Ideal answer could not be generated.", "feedback": ""}
+
+def extract_skills_from_text(text: str):
+    if not text or not text.strip():
+        return []
+    prompt = SKILL_EXTRACTION_PROMPT.format(text=text[:4000]) # limit context length safely
+    try:
+        response = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model=MODEL_NAME,
+            temperature=0.1,
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content
+        return json.loads(content).get("skills", [])
+    except Exception as e:
+        print(f"Error parsing LLM response for skill extraction: {e}")
+        return []
