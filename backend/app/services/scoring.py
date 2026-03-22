@@ -81,13 +81,13 @@ def score_answer_nlp(user_answer: str, ideal_answer: str, keywords: list[str], q
     else:
         w = {"s": 0.40, "k": 0.45, "l": 0.15}
 
-    final = round(w["s"] * sem_score + w["k"] * kw_score + w["l"] * len_score, 1)
+    final = float(round(w["s"] * sem_score + w["k"] * kw_score + w["l"] * len_score, 1))
 
     return {
-        "final_score": final,
-        "semantic_score": sem_score,
-        "keyword_score": kw_score,
-        "length_score": len_score,
+        "final_score": float(final),
+        "semantic_score": float(sem_score),
+        "keyword_score": float(kw_score),
+        "length_score": float(len_score),
         "matched_keywords": matched,
         "missing_keywords": [k for k in processed_kws if k not in matched],
     }

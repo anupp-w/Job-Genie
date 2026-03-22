@@ -28,12 +28,14 @@ export default function InterviewChatPage() {
       
       if (res.data.message === "All questions completed") {
         router.push(`/dashboard/interviews/${sessionId}/results`);
-      } else if (res.data.question) {
-        setQuestion(res.data.question);
+      } else if (res.data.id) {
+        setQuestion(res.data);
+      } else {
+        throw new Error("Invalid response format");
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.detail || "Failed to load next question.");
+      setError(err.response?.data?.detail || err.message || "Failed to load next question.");
     } finally {
       setLoading(false);
     }
@@ -149,12 +151,22 @@ export default function InterviewChatPage() {
             </div>
 
             <div className="space-y-5">
-              <div>
-                <h4 className="text-sm font-semibold text-[var(--foreground)] mb-2 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Ideal Answer Pattern
-                </h4>
-                <div className="p-4 rounded-xl bg-emerald-500/5 text-sm text-[var(--foreground)] leading-relaxed font-medium">
-                  "{result.ideal_answer}"
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="flex flex-col h-full">
+                  <h4 className="text-sm font-semibold text-[var(--foreground)] mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400"></span> Your Answer
+                  </h4>
+                  <div className="flex-1 p-4 rounded-xl bg-[var(--surface-2)] border border-[var(--border)] text-sm text-[var(--foreground)] leading-relaxed font-medium">
+                    "{result.user_answer}"
+                  </div>
+                </div>
+                <div className="flex flex-col h-full">
+                  <h4 className="text-sm font-semibold text-[var(--foreground)] mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Ideal Answer Pattern
+                  </h4>
+                  <div className="flex-1 p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-sm text-[var(--foreground)] leading-relaxed font-medium">
+                    "{result.ideal_answer}"
+                  </div>
                 </div>
               </div>
               <div>
@@ -164,6 +176,16 @@ export default function InterviewChatPage() {
                 <div className="p-4 rounded-xl bg-indigo-500/5 text-sm text-[var(--foreground)] leading-relaxed font-medium">
                   {result.llm_feedback}
                 </div>
+                {result.score_breakdown?.matched_keywords?.length > 0 && (
+                  <div className="mt-4 p-4 rounded-xl bg-emerald-500/5 text-sm">
+                    <span className="font-semibold text-emerald-600 block mb-1">Matched keywords in your answer:</span>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {result.score_breakdown.matched_keywords.map((kw: string, i: number) => (
+                        <span key={i} className="px-2 py-1 bg-emerald-500/10 text-emerald-600 rounded-lg text-xs font-medium border border-emerald-500/20">{kw}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {result.score_breakdown?.missing_keywords?.length > 0 && (
                   <div className="mt-4 p-4 rounded-xl bg-rose-500/5 text-sm">
                     <span className="font-semibold text-rose-500 block mb-1">Missing keywords that would boost your score:</span>
@@ -183,7 +205,7 @@ export default function InterviewChatPage() {
               onClick={fetchNextQuestion}
               className="flex items-center gap-2 bg-[var(--foreground)] text-[var(--background)] px-6 py-3 rounded-xl font-medium shadow-md hover:scale-105 active:scale-95 transition-all"
             >
-              Continue to Next <ChevronRight className="w-5 h-5" />
+              {question.question_number === 10 ? "Finish Interview" : "Continue to Next"} <ChevronRight className="w-5 h-5" />
             </button>
           </div>
         </div>

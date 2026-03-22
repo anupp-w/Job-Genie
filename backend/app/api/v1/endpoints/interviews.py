@@ -174,14 +174,19 @@ def get_results(
         if ans:
              # Add question details to result
             results.append({
-                "question_id": q.id,
-                "question_text": q.question_text,
-                "type": q.question_type,
-                "user_answer": ans.user_answer,
-                "ideal_answer": ans.ideal_answer,
-                "feedback": ans.llm_feedback,
-                "score": float(ans.final_score) if ans.final_score is not None else 0.0,
-                "breakdown": ans.score_breakdown
+                "question": {
+                    "id": q.id,
+                    "question_number": q.question_number,
+                    "question_text": q.question_text,
+                    "type": q.question_type,
+                },
+                "answer": {
+                    "user_answer": ans.user_answer,
+                    "ideal_answer": ans.ideal_answer,
+                    "llm_feedback": ans.llm_feedback,
+                    "final_score": float(ans.final_score) if ans.final_score is not None else 0.0,
+                    "score_breakdown": ans.score_breakdown
+                }
             })
             if ans.final_score:
                 total_score += float(ans.final_score)
@@ -190,7 +195,13 @@ def get_results(
     avg_score = round(total_score / max(answered_count, 1), 1)
     
     return {
-        "session": session,
+        "session": {
+            "id": session.id,
+            "job_title": session.job_title,
+            "status": session.status,
+            "round": session.round,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+        },
         "average_score": avg_score,
         "results": results
     }
