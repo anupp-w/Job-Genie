@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   FileText,
@@ -30,9 +30,16 @@ import {
   Phone,
   Edit2,
   Lock,
-  Check
+  Check,
+  BarChart3,
+  Calendar,
+  Eye,
+  X
 } from "lucide-react";
 import api from "@/services/api";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
+import { analyzeResume, type ResumeAnalysisResult } from "@/lib/resume-analyzer";
 
 type ResumeResponse = {
   id: number;
@@ -59,6 +66,18 @@ export default function ResumesPage() {
   const [isTailoring, setIsTailoring] = useState(false);
   const [matchScore, setMatchScore] = useState<number | null>(null);
   const [explanation, setExplanation] = useState<string | null>(null);
+
+  // Analysis State
+  const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<ResumeAnalysisResult | null>(null);
+  const [analysisJd, setAnalysisJd] = useState("");
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
+
+  // Preview Scaling
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [previewScale, setPreviewScale] = useState(0.55);
 
   // Types for Resume Data
   type Experience = {
@@ -239,12 +258,46 @@ export default function ResumesPage() {
         ]
       };
       const res = await api.post<ResumeResponse>("/resumes", payload);
-      setResumes(prev => [res.data, ...prev]);
+      setResumes(prev => [res.data, ...prev.filter(r => r.id !== res.data.id)]); // prevent dups visually
       alert("Resume saved successfully!");
     } catch (err: any) {
       setError("Failed to save resume.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const loadResume = (res: ResumeResponse) => {
+    try {
+      const structSection = res.sections?.find((s: any) => s.section_type === "structured_data");
+      let data = null;
+      if (structSection && structSection.content) {
+        data = JSON.parse(structSection.content);
+      } else if (res.parsed_content) {
+        data = JSON.parse(res.parsed_content);
+      }
+      
+      if (data) {
+        setResumeData({ ...data, title: res.title });
+        setViewMode("builder");
+      } else {
+        alert("This resume has no editable data.");
+      }
+    } catch (err) {
+      console.error("Failed to load resume data:", err);
+      alert("Could not load the resume data.");
+    }
+  };
+
+  const handleDelete = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this resume?")) return;
+    try {
+      await api.delete(`/resumes/${id}`);
+      setResumes(prev => prev.filter(r => r.id !== id));
+    } catch (err) {
+      console.error("Failed to delete resume:", err);
+      alert("Failed to delete the resume.");
     }
   };
 
@@ -270,9 +323,54 @@ export default function ResumesPage() {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handleDownloadPDF = useCallback(async () => {
+    const el = previewRef.current;
+    if (!el) return;
+    setIsDownloading(true);
+    try {
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        windowWidth: 816,
+        windowHeight: 1056,
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+      pdf.addImage(imgData, "PNG", 0, 0, pdfW, pdfH);
+      const fileName = (resumeData.title || "Resume").replace(/[^a-zA-Z0-9]/g, "_") + ".pdf";
+      pdf.save(fileName);
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      alert("PDF download failed. Please try again.");
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [resumeData.title]);
+
+  const handleRunAnalysis = () => {
+    const result = analyzeResume(resumeData, analysisJd || undefined);
+    setAnalysisResult(result);
   };
+
+  // Preview scaling effect
+  useEffect(() => {
+    const container = previewContainerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const containerW = entry.contentRect.width - 48; // subtract padding
+        const resumeW = 816; // 8.5in
+        const scale = Math.min(containerW / resumeW, 1);
+        setPreviewScale(scale);
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [viewMode]);
 
   const addExperience = () => {
     setResumeData(prev => ({
@@ -369,89 +467,138 @@ export default function ResumesPage() {
 
   if (viewMode === "landing") {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 -mt-8 -mx-8">
-        <div className="max-w-4xl w-full space-y-12">
-          <div className="text-center space-y-4">
-             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-50 text-indigo-600 text-sm font-bold border border-indigo-100 mb-4 animate-bounce">
-                <Sparkles className="w-4 h-4" /> AI Powered Resume Engine
-             </div>
-             <h1 className="text-5xl font-black text-slate-900 tracking-tight leading-tight">Create your Pro Resume in <span className="text-indigo-600 italic underline decoration-indigo-200">minutes</span>.</h1>
-             <p className="text-xl text-slate-500 max-w-2xl mx-auto">Choose a starting point to generate a professional, high-matching resume for your dream job.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-             {/* Build from Scratch */}
-             <button
-               onClick={() => setViewMode("builder")}
-               className="group relative p-8 bg-white border-2 border-slate-100 hover:border-indigo-500 rounded-[2.5rem] text-left transition-all hover:shadow-2xl hover:shadow-indigo-100 active:scale-[0.98]"
-             >
-                <div className="w-16 h-16 rounded-3xl bg-indigo-600 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-xl shadow-indigo-200">
-                   <Plus className="w-8 h-8 text-white" />
-                </div>
-                <h3 className="text-2xl font-bold text-slate-900 mb-2">Build from Scratch</h3>
-                <p className="text-slate-500 leading-relaxed">Fill out your details step-by-step and see your resume come to life in the live preview.</p>
-                <div className="mt-8 flex items-center text-indigo-600 font-bold gap-2">
-                   Get Started <Sparkles className="w-4 h-4" />
-                </div>
-             </button>
-
-             {/* Upload & Tailor */}
-             <div className="relative group p-8 bg-white border-2 border-slate-100 hover:border-purple-500 rounded-[2.5rem] text-left transition-all hover:shadow-2xl hover:shadow-purple-100">
-                <input 
-                  type="file" 
-                  accept=".pdf"
-                  onChange={async (e) => {
-                    if (e.target.files && e.target.files.length > 0) {
-                      const file = e.target.files[0];
-                      const formData = new FormData();
-                      formData.append("file", file);
-                      try {
-                        // We do a hacky toast here since we don't have a global toast
-                        alert("Uploading and parsing " + file.name + "...");
-                        const res = await api.post("/parse", formData, {
-                           headers: { "Content-Type": "multipart/form-data" }
-                        });
-                        setResumeData(res.data.parsed_data);
-                        setViewMode("builder");
-                      } catch (err: any) {
-                        alert("Failed to parse resume: " + (err.response?.data?.detail || err.message));
-                      }
-                    }
-                  }}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                  title="Upload PDF Resume"
-                />
-                <div className="w-16 h-16 rounded-3xl bg-purple-600 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-xl shadow-purple-200">
-                   <Upload className="w-8 h-8 text-white" />
-                </div>
-                <h3 className="text-2xl font-bold text-slate-900 mb-2">Upload & Tailor <span className="text-sm font-normal text-purple-600 bg-purple-50 px-2 py-1 rounded ml-2">PDF</span></h3>
-                <p className="text-slate-500 leading-relaxed">Instantly populate the builder from your existing PDF, then let AI tailor it to any JD.</p>
-                <div className="mt-8 flex items-center text-purple-600 font-bold gap-2">
-                   Select PDF File <Sparkles className="w-4 h-4" />
-                </div>
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start p-8 -mt-8 -mx-8">
+        <div className="max-w-6xl w-full space-y-12 py-10">
+          
+          {error && (
+            <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium flex items-center gap-3 border border-red-100">
+               <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                  <span className="font-bold text-red-600">!</span>
                </div>
-          </div>
-
-          {resumes.length > 0 && (
-            <div className="space-y-4">
-              <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest pl-2">Recent Resumes</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {resumes.slice(0, 3).map((res) => (
-                  <div key={res.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center gap-4 hover:border-slate-200 transition-colors cursor-pointer group">
-                    <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
-                       <FileText className="w-5 h-5 text-slate-400 group-hover:text-indigo-600" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                       <p className="text-sm font-bold text-slate-900 truncate">{res.title}</p>
-                       <p className="text-xs text-slate-400 uppercase font-bold tracking-tighter">Score: {res.ats_score}%</p>
-                    </div>
+               <div className="flex-1">
+                 {error}
                </div>
-                ))}
-              </div>
-               </div>
+               <button onClick={() => setError(null)} className="p-1 hover:bg-red-100 rounded-lg">
+                 <X className="w-4 h-4" />
+               </button>
+            </div>
           )}
+
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+             <div className="space-y-4">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-50 text-indigo-600 text-sm font-bold border border-indigo-100">
+                   <Sparkles className="w-4 h-4" /> AI Powered Resume Engine
+                </div>
+                <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-tight">My Resumes</h1>
+                <p className="text-lg text-slate-500 max-w-2xl">Manage your resumes, track their ATS scores, or build new tailored versions.</p>
+             </div>
+             
+             <button
+               onClick={() => {
+                  setResumeData({ title: "Untitled Resume", personal: { firstName: "", lastName: "", phone: "", email: "", linkedin: "", github: "", website: "" }, summary: "", objective: "", experience: [], projects: [], education: [], skills: [{ name: "Technical Skills", skills: [] }, { name: "Soft Skills", skills: [] }], certifications: [], leadership: [], research: [], awards: [], publications: [] });
+                  setViewMode("builder");
+               }}
+               className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-500/20 transition-all cursor-pointer whitespace-nowrap"
+             >
+                <Plus className="w-5 h-5" /> Build from Scratch
+             </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+             
+             {/* Upload Quick Card */}
+             <div className="relative group p-8 bg-white border border-dashed border-slate-300 hover:border-purple-500 hover:bg-purple-50/50 rounded-3xl text-left transition-all hover:shadow-xl hover:shadow-purple-100/50 cursor-pointer flex flex-col justify-center min-h-[220px]">
+                {!isParsing && (
+                  <input 
+                    type="file" 
+                    accept=".pdf"
+                    onChange={async (e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        const file = e.target.files[0];
+                        const formData = new FormData();
+                        formData.append("file", file);
+                        try {
+                          setIsParsing(true);
+                          setError(null);
+                          const res = await fetch("/api/v1/resumes/parse", {
+                            method: "POST",
+                            headers: {
+                              Authorization: `Bearer ${localStorage.getItem("token")}`
+                            },
+                            body: formData
+                          });
+                          
+                          if (!res.ok) {
+                            const errorData = await res.json().catch(() => ({}));
+                            throw new Error(errorData.detail || "Failed to parse resume");
+                          }
+                          
+                          const parsedData = await res.json();
+                          setResumeData({ ...resumeData, ...parsedData.parsed_data });
+                          setViewMode("builder");
+                        } catch (err: any) {
+                          setError(err.message || "Failed to parse resume");
+                        } finally {
+                          setIsParsing(false);
+                          // reset input so same file can be selected again if needed
+                          e.target.value = "";
+                        }
+                      }
+                    }}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    title="Upload PDF Resume"
+                  />
+                )}
+                <div className="w-12 h-12 rounded-2xl bg-slate-100 group-hover:bg-purple-100 flex items-center justify-center mb-4 transition-colors">
+                   {isParsing ? <Loader2 className="w-6 h-6 text-purple-600 animate-spin" /> : <Upload className="w-6 h-6 text-slate-400 group-hover:text-purple-600" />}
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-1 group-hover:text-purple-700 transition-colors">
+                   {isParsing ? "Extracting Data..." : "Upload & Tailor PDF"}
+                </h3>
+                <p className="text-sm text-slate-500">
+                   {isParsing ? "Hang tight, AI is analyzing your resume." : "Extract data from an existing resume to start editing."}
+                </p>
+             </div>
+
+             {/* Saved Resumes */}
+             {resumes.map((res) => (
+                <div 
+                  key={res.id} 
+                  onClick={() => loadResume(res)}
+                  className="group relative p-8 bg-white border border-slate-200 hover:border-indigo-300 rounded-3xl text-left transition-all shadow-sm hover:shadow-xl hover:shadow-indigo-100/50 cursor-pointer flex flex-col justify-between min-h-[220px]"
+                >
+                   <button 
+                     onClick={(e) => handleDelete(e, res.id)}
+                     className="absolute top-4 right-4 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors z-20 opacity-0 group-hover:opacity-100"
+                   >
+                      <Trash2 className="w-4 h-4" />
+                   </button>
+                   <div>
+                      <div className="flex items-center gap-3 mb-4">
+                         <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center">
+                            <FileText className="w-6 h-6 text-indigo-500" />
+                         </div>
+                         {res.ats_score > 0 && (
+                            <div className="px-3 py-1 bg-green-50 text-green-600 border border-green-200 rounded-xl text-xs font-black self-start mt-1">
+                               {res.ats_score}% ATS
+                            </div>
+                         )}
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-900 line-clamp-2 leading-tight">{res.title || "Untitled Resume"}</h3>
+                      <p className="text-xs text-slate-400 mt-2 flex items-center gap-1.5">
+                         <Calendar className="w-3.5 h-3.5" />
+                         Updated {res.updated ? new Date(res.updated).toLocaleDateString() : 'Recently'}
+                      </p>
+                   </div>
+                   <div className="flex items-center text-sm font-bold text-slate-400 group-hover:text-indigo-600 mt-4 transition-colors gap-2">
+                       Open in Builder <ArrowLeft className="w-4 h-4 rotate-180" />
+                   </div>
+                </div>
+             ))}
+
+          </div>
         </div>
-               </div>
+      </div>
     );
   }
 
@@ -492,10 +639,17 @@ export default function ResumesPage() {
                </div>
             )}
             <button 
-              onClick={handlePrint}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200 rounded-xl"
+              onClick={handleDownloadPDF}
+              disabled={isDownloading}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200 rounded-xl disabled:opacity-50"
             >
-               <Download className="w-4 h-4" /> Download PDF
+               {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download PDF
+            </button>
+            <button 
+              onClick={() => { setShowAnalysisPanel(true); handleRunAnalysis(); }}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border border-emerald-200 rounded-xl"
+            >
+               <BarChart3 className="w-4 h-4" /> Analyze
             </button>
             <button 
               onClick={() => setShowTailorModal(true)}
@@ -583,9 +737,10 @@ export default function ResumesPage() {
                </div>
         </div>
 
-           {/* RIGHT: LIVE PREVIEW (Matching User Reference Image) */}
-           <div className="bg-[#cbd5e1] overflow-y-auto flex justify-center p-4 xl:p-8 print:bg-white print:p-0 print:overflow-visible custom-scrollbar">
-              <div id="resume-preview" className="bg-white w-[8.5in] min-h-[11in] shadow-2xl shrink-0 mx-auto box-border font-serif text-black" style={{ padding: '0.4in 0.6in' }}>
+           {/* RIGHT: LIVE PREVIEW — scaled to fit panel */}
+           <div ref={previewContainerRef} className="bg-[#e2e8f0] overflow-y-auto overflow-x-hidden flex justify-center p-6 no-print custom-scrollbar">
+              <div style={{ transform: `scale(${previewScale})`, transformOrigin: 'top center', width: '8.5in', minHeight: '11in', flexShrink: 0 }}>
+              <div ref={previewRef} id="resume-preview" className="bg-white w-[8.5in] min-h-[11in] shadow-2xl shrink-0 mx-auto box-border font-serif text-black" style={{ padding: '0.4in 0.6in' }}>
 
                {/* Header: Name & Contact */}
                <div className="text-center mb-4">
@@ -830,6 +985,7 @@ export default function ResumesPage() {
 
             </div>
                </div>
+              </div>
       </div>
 
       {/* Add Section Modal (Matching User Reference) */}
@@ -1415,6 +1571,136 @@ export default function ResumesPage() {
                </div>
             </div>
          </div>
+      )}
+
+      {/* Analysis Modal */}
+      {showAnalysisPanel && analysisResult && (
+        <div className="fixed inset-0 z-50 flex justify-end p-0 bg-slate-900/20 backdrop-blur-sm">
+           <div className="bg-white w-full max-w-lg h-full shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-300">
+              <div className="p-8 space-y-8">
+                 <div className="flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur pb-4 z-10">
+                    <div className="space-y-1">
+                       <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                          <BarChart3 className="w-6 h-6 text-emerald-500" />
+                          Resume Analysis
+                       </h2>
+                    </div>
+                    <button onClick={() => setShowAnalysisPanel(false)} className="p-2 text-slate-400 hover:text-slate-900 bg-slate-100 rounded-full transition-colors">
+                       <X className="w-5 h-5" />
+                    </button>
+                 </div>
+
+                 {/* Overall Score */}
+                 <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-3xl border border-slate-100">
+                    <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
+                       <svg className="w-full h-full -rotate-90">
+                          <circle cx="48" cy="48" r="42" fill="transparent" stroke="rgba(16, 185, 129, 0.1)" strokeWidth="8" />
+                          <circle cx="48" cy="48" r="42" fill="transparent" stroke={analysisResult.overallScore >= 70 ? "#10b981" : analysisResult.overallScore >= 50 ? "#f59e0b" : "#ef4444"} strokeWidth="8" strokeDasharray={264} strokeDashoffset={264 - (264 * analysisResult.overallScore) / 100} strokeLinecap="round" className="transition-all duration-1000" />
+                       </svg>
+                       <div className="absolute inset-0 flex flex-col items-center justify-center">
+                          <span className="text-2xl font-black text-slate-900">{analysisResult.overallScore}</span>
+                       </div>
+                    </div>
+                    <div className="space-y-2">
+                       <h3 className="text-lg font-bold text-slate-900">Overall Score: <span className={analysisResult.overallScore >= 70 ? "text-emerald-500" : analysisResult.overallScore >= 50 ? "text-amber-500" : "text-red-500"}>{analysisResult.grade}</span></h3>
+                       <p className="text-xs text-slate-500 leading-relaxed">
+                          Your resume has {analysisResult.wordCount} words and {analysisResult.bulletCount} bullet points.
+                       </p>
+                    </div>
+                 </div>
+
+                 {/* JD Match Section */}
+                 <div className="space-y-4">
+                    <div className="space-y-2">
+                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">ATS Keyword Check</label>
+                       <textarea 
+                         value={analysisJd}
+                         onChange={(e) => setAnalysisJd(e.target.value)}
+                         placeholder="Paste a job description here and click Analyze to check ATS keywords..."
+                         className="w-full h-24 bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+                       />
+                       <button 
+                         onClick={handleRunAnalysis}
+                         className="w-full py-2 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl hover:bg-emerald-200 transition-colors"
+                       >
+                         Refresh Analysis
+                       </button>
+                    </div>
+
+                    {analysisResult.jdMatch && (
+                       <div className="p-5 bg-white border border-emerald-100 rounded-2xl space-y-4 shadow-sm">
+                          <div className="flex justify-between items-center">
+                             <span className="font-bold text-slate-900 text-sm">Keyword Match</span>
+                             <span className="font-black text-emerald-600">{analysisResult.jdMatch.percentage}%</span>
+                          </div>
+                          
+                          {analysisResult.jdMatch.missingKeywords.length > 0 && (
+                            <div className="space-y-2">
+                               <p className="text-xs font-bold text-rose-500">Missing Keywords to Add:</p>
+                               <div className="flex flex-wrap gap-1.5">
+                                  {analysisResult.jdMatch.missingKeywords.map((kw, i) => (
+                                     <span key={i} className="px-2 py-1 bg-rose-50 text-rose-600 rounded text-[10px] font-bold">{kw}</span>
+                                  ))}
+                               </div>
+                            </div>
+                          )}
+                          
+                          {analysisResult.jdMatch.foundKeywords.length > 0 && (
+                            <div className="space-y-2">
+                               <p className="text-xs font-bold text-emerald-600">Matched Keywords:</p>
+                               <div className="flex flex-wrap gap-1.5">
+                                  {analysisResult.jdMatch.foundKeywords.slice(0, 10).map((kw, i) => (
+                                     <span key={i} className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">{kw}</span>
+                                  ))}
+                                  {analysisResult.jdMatch.foundKeywords.length > 10 && (
+                                     <span className="px-2 py-1 bg-slate-50 text-slate-500 rounded text-[10px] font-bold">+{analysisResult.jdMatch.foundKeywords.length - 10} more</span>
+                                  )}
+                               </div>
+                            </div>
+                          )}
+                       </div>
+                    )}
+                 </div>
+
+                 {/* Breakdown */}
+                 <div className="space-y-4">
+                    <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">Analysis Breakdown</h3>
+                    <div className="space-y-6">
+                       {analysisResult.breakdown.map((cat, i) => (
+                          <div key={i} className="space-y-3">
+                             <div className="flex justify-between items-end">
+                                <div className="flex items-center gap-2">
+                                   <span className="text-base">{cat.icon}</span>
+                                   <span className="font-bold text-sm text-slate-700">{cat.category}</span>
+                                </div>
+                                <span className="text-xs font-bold text-slate-400">{cat.score}/{cat.maxScore}</span>
+                             </div>
+                             
+                             <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full rounded-full ${cat.score === cat.maxScore ? 'bg-emerald-500' : cat.score >= cat.maxScore * 0.5 ? 'bg-amber-400' : 'bg-rose-500'}`}
+                                  style={{ width: `${(cat.score / cat.maxScore) * 100}%` }}
+                                />
+                             </div>
+
+                             {cat.tips.length > 0 && (
+                               <ul className="space-y-1.5 mt-2">
+                                  {cat.tips.map((tip, j) => (
+                                     <li key={j} className="text-[11px] text-slate-500 flex items-start gap-1.5">
+                                        <ArrowLeft className="w-3 h-3 text-amber-500 shrink-0 mt-0.5 rotate-180" />
+                                        <span>{tip}</span>
+                                     </li>
+                                  ))}
+                               </ul>
+                             )}
+                          </div>
+                       ))}
+                    </div>
+                 </div>
+
+              </div>
+           </div>
+        </div>
       )}
 
       <style jsx global>{`

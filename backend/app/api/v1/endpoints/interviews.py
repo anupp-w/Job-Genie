@@ -12,6 +12,7 @@ from app import schemas
 router = APIRouter()
 
 @router.get("/", response_model=List[schemas.InterviewSessionResponse])
+@router.get("", response_model=List[schemas.InterviewSessionResponse])
 def get_user_interviews(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

@@ -10,7 +10,7 @@ import models, schemas, crud, auth
 # Create Tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Job Genie API", version="0.1.0")
+app = FastAPI(title="Job Genie API", version="0.1.0", redirect_slashes=False)
 
 # CORS - Allow All for Development
 app.add_middleware(
@@ -191,16 +191,21 @@ def get_skill_gap_endpoint(resume_id: int, job_id: int, db: Session = Depends(ge
     from app.services.analysis_service import get_skill_gap
     return get_skill_gap(db, resume_id, job_id)
 
-@app.get("/api/v1/analysis/roadmap/{resume_id}/{job_id}", response_model=schemas.RoadmapResponse)
+@app.get("/api/v1/analysis/roadmap/{resume_id}/{job_id}")
 def get_roadmap_endpoint(resume_id: int, job_id: int, db: Session = Depends(get_db)):
     from app.services.analysis_service import get_skill_gap, generate_roadmap
-    gap_data = get_skill_gap(db, resume_id, job_id)
-    roadmap = generate_roadmap(db, gap_data["gaps"])
-    return {
-        "resume_id": resume_id,
-        "job_id": job_id,
-        "roadmap": roadmap
-    }
+    import traceback
+    try:
+        gap_data = get_skill_gap(db, resume_id, job_id)
+        roadmap = generate_roadmap(db, gap_data["gaps"])
+        return {
+            "resume_id": resume_id,
+            "job_id": job_id,
+            "roadmap": roadmap
+        }
+    except Exception as e:
+        print(f"ROADMAP ERROR: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/analysis/analyze-new")
 async def analyze_new_endpoint(
@@ -229,7 +234,6 @@ async def analyze_new_endpoint(
     db.flush()
     
     # 3. Extract and Link Resume Skills (Using AI)
-    # Give the AI the parsed context (experience, projects, and initial skills)
     resume_text_for_ai = json.dumps({
         "experience": resume_data.get("experience", []),
         "projects": resume_data.get("projects", []),
@@ -271,7 +275,6 @@ async def analyze_new_endpoint(
     
     # If LLM failed, fallback to basic keyword matching
     if not job_skills_ai:
-        job_words = set(job_description.lower().split())
         all_skills = db.query(models.Skill).all()
         job_skills_ai = [s.name for s in all_skills if s.name.lower() in job_description.lower()]
 
@@ -281,9 +284,16 @@ async def analyze_new_endpoint(
             skill = models.Skill(name=skill_name[:255])
             db.add(skill)
             db.flush()
-        # Set a baseline importance weight (could be scaled up later)
         js = models.JobSkill(job_id=new_job.id, skill_id=skill.id, importance_weight=5)
         db.add(js)
+    # 6. Create ResumeJobScore to permanently link this resume-job pair
+    link = models.ResumeJobScore(
+        resume_id=new_resume.id,
+        job_id=new_job.id,
+        match_score=0,  # Will be calculated on demand
+        missing_keywords=[]
+    )
+    db.add(link)
     
     db.commit()
     
@@ -291,6 +301,57 @@ async def analyze_new_endpoint(
         "resume_id": new_resume.id,
         "job_id": new_job.id
     }
+
+@app.get("/api/v1/analysis/history")
+def get_analysis_history(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """Returns the user's past roadmap analyses, newest first."""
+    from app.services.analysis_service import get_skill_gap
+
+    # Use ResumeJobScore to get reliably paired resume-job combos
+    pairs = db.query(models.ResumeJobScore).join(
+        models.Resume, models.ResumeJobScore.resume_id == models.Resume.id
+    ).filter(
+        models.Resume.user_id == current_user.id,
+        models.Resume.title.like("Analysis -%")
+    ).order_by(models.ResumeJobScore.created_at.desc()).all()
+    
+    history = []
+    for pair in pairs:
+        resume = db.query(models.Resume).filter(models.Resume.id == pair.resume_id).first()
+        job = db.query(models.Job).filter(models.Job.id == pair.job_id).first()
+        
+        if not resume or not job:
+            continue
+        
+        # Calculate match percentage
+        try:
+            gap_data = get_skill_gap(db, resume.id, job.id)
+            match_pct = gap_data["match_percentage"]
+            match_count = len(gap_data["matches"])
+            gap_count = len(gap_data["gaps"])
+        except:
+            match_pct = 0
+            match_count = 0
+            gap_count = 0
+        
+        jd = job.description or ""
+        history.append({
+            "id": pair.id,
+            "resume_id": resume.id,
+            "job_id": job.id,
+            "resume_title": resume.title,
+            "job_title": job.title or "Target Role",
+            "job_description_preview": jd[:120] + "..." if len(jd) > 120 else jd,
+            "match_percentage": match_pct,
+            "skills_matched": match_count,
+            "skills_gap": gap_count,
+            "created_at": resume.created_at.isoformat() if resume.created_at else None
+        })
+    
+    return history
 
 if __name__ == "__main__":
     import uvicorn

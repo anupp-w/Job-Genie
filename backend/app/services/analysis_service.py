@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 import models
 from typing import List, Dict, Any
 
@@ -22,6 +22,8 @@ def get_skill_gap(db: Session, resume_id: int, job_id: int) -> Dict[str, Any]:
     
     for js in job_skills_assoc:
         skill = db.query(models.Skill).filter(models.Skill.id == js.skill_id).first()
+        if not skill:
+            continue
         if skill.id in resume_skill_ids:
             matches.append({
                 "id": skill.id,
@@ -51,21 +53,25 @@ def generate_roadmap(db: Session, gap_skills: List[Dict[str, Any]]) -> List[Dict
     """
     roadmap = []
     
+    # SQLAlchemy 2.0 case() syntax
+    level_order = case(
+        (models.Course.level == 'Beginner', 1),
+        (models.Course.level == 'Intermediate', 2),
+        (models.Course.level == 'Advanced', 3),
+        else_=4
+    )
+    
     for skill_info in gap_skills:
         skill_id = skill_info["id"]
         skill_name = skill_info["name"]
         
         # Find courses for this skill
-        courses = db.query(models.Course).join(models.CourseSkill).filter(models.CourseSkill.skill_id == skill_id).order_by(
-            # Order by level (Beginner 1, Intermediate 2, Advanced 3)
-            func.case(
-                (models.Course.level == 'Beginner', 1),
-                (models.Course.level == 'Intermediate', 2),
-                (models.Course.level == 'Advanced', 3),
-                else_=4
-            ).asc(),
+        courses = db.query(models.Course).join(models.CourseSkill).filter(
+            models.CourseSkill.skill_id == skill_id
+        ).order_by(
+            level_order.asc(),
             models.Course.rating.desc()
-        ).limit(3).all() # Top 3 courses per skill
+        ).limit(3).all()  # Top 3 courses per skill
         
         if courses:
             roadmap.append({
@@ -74,13 +80,13 @@ def generate_roadmap(db: Session, gap_skills: List[Dict[str, Any]]) -> List[Dict
                 "courses": [
                     {
                         "id": c.id,
-                        "title": c.title,
-                        "platform": c.platform,
-                        "url": c.url,
-                        "level": c.level,
-                        "rating": c.rating,
-                        "duration": c.duration,
-                        "institution": c.institution
+                        "title": c.title or "Untitled Course",
+                        "platform": c.platform or "Unknown",
+                        "url": c.url or "",
+                        "level": c.level or "Unknown",
+                        "rating": c.rating if c.rating is not None else 0.0,
+                        "duration": c.duration or "N/A",
+                        "institution": c.institution or "Unknown"
                     } for c in courses
                 ]
             })

@@ -27,7 +27,6 @@ export default function InterviewsPage() {
     async function fetchHistory() {
       try {
         setHistoryLoading(true);
-        // GET /api/v1/interviews fetches all user interviews
         const res = await api.get("/interviews/");
         setHistory(res.data);
       } catch (err) {
