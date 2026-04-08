@@ -21,6 +21,8 @@ import {
   AlignLeft,
   ChevronRight,
   ChevronLeft,
+  ChevronUp,
+  ChevronDown,
   Target,
   Users,
   FlaskConical,
@@ -51,6 +53,89 @@ type ResumeResponse = {
   updated?: string;
 };
 
+// --- Helper: Ensure a URL has a protocol prefix ---
+function ensureUrl(url: string, type?: "linkedin" | "github"): string {
+  if (!url || !url.trim()) return url;
+  const trimmed = url.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+  if (trimmed.startsWith("mailto:")) return trimmed;
+  // Handle bare usernames like "anupw" -> full URL
+  if (!trimmed.includes(".") && !trimmed.includes("/")) {
+    if (type === "linkedin") return `https://linkedin.com/in/${trimmed}`;
+    if (type === "github") return `https://github.com/${trimmed}`;
+  }
+  return `https://${trimmed}`;
+}
+
+// --- Helper: Normalize any parsed/loaded resume data to match ResumeData shape ---
+function normalizeResumeData(data: any): any {
+  const defaultData = {
+    title: "Untitled Resume",
+    personal: { firstName: "", lastName: "", phone: "", email: "", linkedin: "", github: "", website: "" },
+    summary: "",
+    objective: "",
+    experience: [],
+    projects: [],
+    education: [],
+    skills: [{ name: "Technical Skills", skills: [] }, { name: "Soft Skills", skills: [] }],
+    certifications: [],
+    leadership: [],
+    research: [],
+    awards: [],
+    publications: []
+  };
+
+  if (!data || typeof data !== "object") return defaultData;
+
+  // Normalize personal — handle missing or flattened personal object
+  const rawPersonal = data.personal || {};
+  const personal = {
+    firstName: rawPersonal.firstName || rawPersonal.first_name || "",
+    lastName: rawPersonal.lastName || rawPersonal.last_name || "",
+    phone: rawPersonal.phone || "",
+    email: rawPersonal.email || "",
+    linkedin: rawPersonal.linkedin || "",
+    github: rawPersonal.github || "",
+    website: rawPersonal.website || "",
+  };
+
+  // Normalize skills — backend uses {category, items}, builder uses {name, skills}
+  let skills = defaultData.skills;
+  if (Array.isArray(data.skills)) {
+    skills = data.skills.map((cat: any) => ({
+      name: cat.name || cat.category || "Skills",
+      skills: Array.isArray(cat.skills) ? cat.skills : (Array.isArray(cat.items) ? cat.items : []),
+    }));
+    if (skills.length === 0) skills = defaultData.skills;
+  } else if (data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)) {
+    // Handle {technical: "...", soft: "..."} format
+    skills = Object.entries(data.skills).map(([key, val]: [string, any]) => ({
+      name: key.charAt(0).toUpperCase() + key.slice(1) + " Skills",
+      skills: typeof val === "string" ? val.split(",").map((s: string) => s.trim()).filter(Boolean) : (Array.isArray(val) ? val : []),
+    }));
+  }
+
+  // Normalize certifications — handle missing url field
+  const certifications = Array.isArray(data.certifications)
+    ? data.certifications.map((c: any) => ({ ...c, url: c.url || "" }))
+    : [];
+
+  return {
+    ...defaultData,
+    ...data,
+    personal,
+    skills,
+    certifications,
+    experience: Array.isArray(data.experience) ? data.experience : [],
+    projects: Array.isArray(data.projects) ? data.projects : [],
+    education: Array.isArray(data.education) ? data.education : [],
+    leadership: Array.isArray(data.leadership) ? data.leadership : [],
+    research: Array.isArray(data.research) ? data.research : [],
+    awards: Array.isArray(data.awards) ? data.awards : [],
+    publications: Array.isArray(data.publications) ? data.publications : [],
+  };
+}
+
 export default function ResumesPage() {
   const router = useRouter();
   const [resumes, setResumes] = useState<ResumeResponse[]>([]);
@@ -62,10 +147,14 @@ export default function ResumesPage() {
 
   // AI Tailoring State
   const [showTailorModal, setShowTailorModal] = useState(false);
+  const [showTailorReport, setShowTailorReport] = useState(false);
   const [jdInput, setJdInput] = useState("");
   const [isTailoring, setIsTailoring] = useState(false);
   const [matchScore, setMatchScore] = useState<number | null>(null);
   const [explanation, setExplanation] = useState<string | null>(null);
+  const [tailorChanges, setTailorChanges] = useState<string[]>([]);
+  const [tailorMissing, setTailorMissing] = useState<string[]>([]);
+  const [tailorMatched, setTailorMatched] = useState<string[]>([]);
 
   // Analysis State
   const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
@@ -199,7 +288,15 @@ export default function ResumesPage() {
       setLoading(true);
       try {
         const res = await api.get<ResumeResponse[]>("/resumes");
-        setResumes(res.data);
+        // Filter out analysis records and sort by date (newest first)
+        const filtered = res.data
+          .filter((r: ResumeResponse) => !r.title?.startsWith("Analysis -"))
+          .sort((a: ResumeResponse, b: ResumeResponse) => {
+            const da = a.updated ? new Date(a.updated).getTime() : 0;
+            const db = b.updated ? new Date(b.updated).getTime() : 0;
+            return db - da;
+          });
+        setResumes(filtered);
       } catch (err: any) {
         console.error("Resumes fetch error:", err);
       } finally {
@@ -215,30 +312,23 @@ export default function ResumesPage() {
 
     try {
       setSaving(true);
-      const response = await fetch("/api/v1/resumes/parse", {
-        method: "POST",
-        body: formData,
+      const response = await api.post("/resumes/parse", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to parse resume");
-      }
-
-      const parsedData = await response.ok ? await response.json() : null;
+      const parsedData = response.data?.parsed_data;
       if (parsedData) {
+        const normalized = normalizeResumeData(parsedData);
         setResumeData(prev => ({
           ...prev,
-          ...parsedData,
-          personal: { ...prev.personal, ...parsedData.personal },
-          skills: parsedData.skills || prev.skills,
-          experience: parsedData.experience || prev.experience,
-          education: parsedData.education || prev.education,
+          ...normalized,
+          title: prev.title || normalized.title,
         }));
         alert("Resume parsed successfully! Please review the auto-filled data.");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Upload error:", error);
-      alert("Coming Soon: Advanced AI parsing is currently being fine-tuned. Please fill in your details manually for now.");
+      alert(error?.response?.data?.detail || "Failed to parse resume. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -278,7 +368,8 @@ export default function ResumesPage() {
       }
       
       if (data) {
-        setResumeData({ ...data, title: res.title });
+        const normalized = normalizeResumeData(data);
+        setResumeData({ ...normalized, title: res.title || normalized.title });
         setViewMode("builder");
       } else {
         alert("This resume has no editable data.");
@@ -310,11 +401,15 @@ export default function ResumesPage() {
         resume_data: resumeData,
         job_description: jdInput
       });
-      setResumeData(res.data.tailored_data);
+      setResumeData(normalizeResumeData(res.data.tailored_data));
       setMatchScore(res.data.match_score);
       setExplanation(res.data.explanation);
+      setTailorChanges(res.data.changes || []);
+      setTailorMissing(res.data.missing_skills || []);
+      setTailorMatched(res.data.matched_skills || []);
+      
       setShowTailorModal(false);
-      alert("Resume tailored successfully!");
+      setShowTailorReport(true);
     } catch (err: any) {
       console.error("Tailoring error:", err);
       setError("AI Tailoring failed. Please check your API key and try again.");
@@ -328,6 +423,24 @@ export default function ResumesPage() {
     if (!el) return;
     setIsDownloading(true);
     try {
+      // Override lab() CSS variables to hex equivalents for html2canvas compatibility
+      const root = document.documentElement;
+      const overrides: Record<string, string> = {
+        "--background": "#ffffff",
+        "--foreground": "#0a0a0a",
+        "--muted": "#f5f5f5",
+        "--muted-foreground": "#737373",
+        "--border": "#e5e5e5",
+        "--ring": "#a1a1a1",
+        "--primary": "#171717",
+        "--primary-foreground": "#fafafa",
+      };
+      const originals: Record<string, string> = {};
+      for (const [key, val] of Object.entries(overrides)) {
+        originals[key] = root.style.getPropertyValue(key);
+        root.style.setProperty(key, val);
+      }
+
       const canvas = await html2canvas(el, {
         scale: 2,
         useCORS: true,
@@ -336,6 +449,13 @@ export default function ResumesPage() {
         windowWidth: 816,
         windowHeight: 1056,
       });
+
+      // Restore original CSS variables
+      for (const [key, val] of Object.entries(originals)) {
+        if (val) root.style.setProperty(key, val);
+        else root.style.removeProperty(key);
+      }
+
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
       const pdfW = pdf.internal.pageSize.getWidth();
@@ -465,6 +585,30 @@ export default function ResumesPage() {
     }));
   };
 
+  // --- Section reordering: move section up or down in the enabledSections list ---
+  const moveSection = (id: string, direction: "up" | "down") => {
+    setEnabledSections(prev => {
+      const idx = prev.indexOf(id);
+      if (idx === -1) return prev;
+      const newIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const updated = [...prev];
+      [updated[idx], updated[newIdx]] = [updated[newIdx], updated[idx]];
+      return updated;
+    });
+  };
+
+  // --- Item reordering: move an item up or down within a list section ---
+  const moveItemInList = (section: keyof ResumeData, index: number, direction: "up" | "down") => {
+    setResumeData(prev => {
+      const arr = [...(prev[section] as any[])];
+      const newIdx = direction === "up" ? index - 1 : index + 1;
+      if (newIdx < 0 || newIdx >= arr.length) return prev;
+      [arr[index], arr[newIdx]] = [arr[newIdx], arr[index]];
+      return { ...prev, [section]: arr };
+    });
+  };
+
   if (viewMode === "landing") {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start p-8 -mt-8 -mx-8">
@@ -520,21 +664,15 @@ export default function ResumesPage() {
                         try {
                           setIsParsing(true);
                           setError(null);
-                          const res = await fetch("/api/v1/resumes/parse", {
-                            method: "POST",
-                            headers: {
-                              Authorization: `Bearer ${localStorage.getItem("token")}`
-                            },
-                            body: formData
+                          const res = await api.post("/resumes/parse", formData, {
+                            headers: { "Content-Type": "multipart/form-data" },
                           });
                           
-                          if (!res.ok) {
-                            const errorData = await res.json().catch(() => ({}));
-                            throw new Error(errorData.detail || "Failed to parse resume");
+                          const parsedData = res.data?.parsed_data;
+                          if (parsedData) {
+                            const normalized = normalizeResumeData(parsedData);
+                            setResumeData(prev => ({ ...prev, ...normalized }));
                           }
-                          
-                          const parsedData = await res.json();
-                          setResumeData({ ...resumeData, ...parsedData.parsed_data });
                           setViewMode("builder");
                         } catch (err: any) {
                           setError(err.message || "Failed to parse resume");
@@ -689,36 +827,63 @@ export default function ResumesPage() {
                  <p className="text-slate-500">Click any section to edit your details.</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 {allSections.filter(s => enabledSections.includes(s.id)).map((sec) => {
-                    const Icon = sec.icon;
-                    return (
-                       <button
-                         key={sec.id}
-                         onClick={() => setEditingSection(sec.id)}
-                         className="group flex flex-col items-start p-6 bg-white border border-slate-100 hover:border-indigo-500/50 rounded-2xl transition-all text-left space-y-4 hover:shadow-xl hover:shadow-indigo-500/5"
-                       >
-                          <div className="w-12 h-12 rounded-xl bg-slate-50 group-hover:bg-indigo-50 flex items-center justify-center transition-colors">
-                             <Icon className="w-6 h-6 text-slate-400 group-hover:text-indigo-600" />
-                          </div>
-                          <div className="space-y-1">
-                             <h3 className="font-bold text-slate-900 text-lg">{sec.label}</h3>
-                             <p className="text-xs text-slate-500 line-clamp-1">{sec.description}</p>
-                          </div>
-                       </button>
-                    );
-                 })}
-                 
-                 <button
-                   onClick={() => setShowAddSectionModal(true)}
-                   className="group flex flex-col items-center justify-center p-6 bg-white/50 border border-dashed border-slate-200 hover:border-indigo-500/50 rounded-2xl transition-all space-y-3 min-h-[160px]"
-                 >
-                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
-                       <Plus className="w-6 h-6 text-slate-400 group-hover:text-indigo-600" />
-                    </div>
-                    <span className="font-bold text-slate-500 group-hover:text-slate-900 transition-colors">Add Section</span>
-                 </button>
-              </div>
+             <div className="space-y-4">
+                {enabledSections.map((secId, i) => {
+                   const sec = allSections.find(s => s.id === secId);
+                   if (!sec) return null;
+                   const Icon = sec.icon;
+                   return (
+                      <div key={sec.id} className="group relative flex items-center bg-white border border-slate-100 hover:border-indigo-500/50 rounded-2xl transition-all shadow-sm">
+                         <div className="flex flex-col gap-1 px-3 border-r border-slate-100 opacity-60 group-hover:opacity-100">
+                             <button 
+                               onClick={() => moveSection(sec.id, "up")} 
+                               disabled={i === 0}
+                               className="p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400 -mb-1"
+                             >
+                                <ChevronUp className="w-4 h-4" />
+                             </button>
+                             <button 
+                               onClick={() => moveSection(sec.id, "down")} 
+                               disabled={i === enabledSections.length - 1}
+                               className="p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400 -mt-1"
+                             >
+                                <ChevronDown className="w-4 h-4" />
+                             </button>
+                         </div>
+                         <button
+                           onClick={() => setEditingSection(sec.id)}
+                           className="flex-1 flex items-center p-6 text-left"
+                         >
+                            <div className="w-12 h-12 rounded-xl bg-slate-50 group-hover:bg-indigo-50 flex items-center justify-center transition-colors shrink-0 mr-4">
+                               <Icon className="w-6 h-6 text-slate-400 group-hover:text-indigo-600" />
+                            </div>
+                            <div className="space-y-1">
+                               <h3 className="font-bold text-slate-900 text-lg">{sec.label}</h3>
+                               <p className="text-xs text-slate-500 line-clamp-1">{sec.description}</p>
+                            </div>
+                         </button>
+                         {sec.id !== "personal" && (
+                            <button 
+                               onClick={() => toggleSection(sec.id)}
+                               className="absolute right-4 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                            >
+                               <Trash2 className="w-4 h-4" />
+                            </button>
+                         )}
+                      </div>
+                   );
+                })}
+                
+                <button
+                  onClick={() => setShowAddSectionModal(true)}
+                  className="w-full flex items-center justify-center p-6 bg-white/50 border border-dashed border-slate-200 hover:border-indigo-500/50 rounded-2xl transition-all gap-3"
+                >
+                   <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
+                      <Plus className="w-4 h-4 text-slate-400 group-hover:text-indigo-600" />
+                   </div>
+                   <span className="font-bold text-slate-500 group-hover:text-slate-900 transition-colors">Add Section</span>
+                </button>
+             </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-8">
                  <button
@@ -760,228 +925,259 @@ export default function ResumesPage() {
                         </div>
                       )}
                       {resumeData.personal.linkedin && (
-                        <div className="flex items-center gap-3">
-                          <span className="text-slate-300">|</span>
-                          <a href={resumeData.personal.linkedin} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline">
-                             <Linkedin className="w-2.5 h-2.5" /> LinkedIn
-                          </a>
-                        </div>
-                      )}
-                      {resumeData.personal.github && (
-                        <div className="flex items-center gap-3">
-                          <span className="text-slate-300">|</span>
-                          <a href={resumeData.personal.github} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline">
-                             <Github className="w-2.5 h-2.5" /> GitHub
-                          </a>
-                        </div>
-                      )}
+                         <div className="flex items-center gap-3">
+                           <span className="text-slate-300">|</span>
+                           <a href={ensureUrl(resumeData.personal.linkedin, "linkedin")} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline">
+                              <Linkedin className="w-2.5 h-2.5" /> LinkedIn
+                           </a>
+                         </div>
+                       )}
+                       {resumeData.personal.github && (
+                         <div className="flex items-center gap-3">
+                           <span className="text-slate-300">|</span>
+                           <a href={ensureUrl(resumeData.personal.github, "github")} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline">
+                              <Github className="w-2.5 h-2.5" /> GitHub
+                           </a>
+                         </div>
+                       )}
                       {resumeData.personal.website && (
-                        <div className="flex items-center gap-3">
-                          <span className="text-slate-300">|</span>
-                          <a href={resumeData.personal.website} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline">
-                             <User className="w-2.5 h-2.5" /> Portfolio
-                          </a>
-                        </div>
-                      )}
+                         <div className="flex items-center gap-3">
+                           <span className="text-slate-300">|</span>
+                           <a href={ensureUrl(resumeData.personal.website)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline">
+                              <User className="w-2.5 h-2.5" /> Portfolio
+                           </a>
+                         </div>
+                       )}
                     </div>
                </div>
 
-               {/* Objective Section */}
-               {resumeData.objective && (
-                 <div className="mb-4">
-                    <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Objective</h2>
-                    <p className="text-[11px] leading-tight text-slate-800">{resumeData.objective}</p>
-                 </div>
-               )}
-
-               {/* Education Section */}
-               <div className="mb-4">
-                  <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Education</h2>
-                  <div className="space-y-2">
-                     {resumeData.education.length > 0 ? resumeData.education.map((edu, i) => (
-                       <div key={i} className="text-[11px] leading-tight">
-                          <div className="flex justify-between items-baseline font-bold">
-                             <span>{edu.school}</span>
-                             <span>{edu.location}</span>
-                          </div>
-                          <div className="flex justify-between items-baseline italic">
-                             <span>{edu.degree}{edu.minor ? `, Minor in ${edu.minor}` : ""}</span>
-                             <span className="not-italic">{edu.startDate} — {edu.endDate}</span>
-                          </div>
-                          {edu.gpa && <div className="text-[10.5px]">GPA: {edu.gpa}</div>}
-                       </div>
-                     )) : (
-                        <div className="text-[11px] text-slate-400 italic">No education provided yet...</div>
-                     )}
-                  </div>
-               </div>
-
-               {/* Experience Section */}
-               <div className="mb-4">
-                  <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Experience</h2>
-                  <div className="space-y-3">
-                     {resumeData.experience.length > 0 ? resumeData.experience.map((exp, i) => (
-                       <div key={i} className="text-[11px] leading-tight">
-                          <div className="flex justify-between items-baseline font-bold">
-                             <span>{exp.role}</span>
-                             <span>{exp.startDate} — {exp.current ? "Present" : exp.endDate}</span>
-                          </div>
-                          <div className="flex justify-between items-baseline italic mb-1">
-                             <span>{exp.company}</span>
-                             <span>{exp.location}</span>
-                          </div>
-                          {exp.description && (
-                            <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                               {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                                 <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                               ))}
-                            </ul>
-                          )}
-                       </div>
-                     )) : (
-                        <div className="text-[11px] text-slate-400 italic">No work experience provided yet...</div>
-                     )}
-                  </div>
-               </div>
-
-               {/* Leadership Section */}
-               {resumeData.leadership.length > 0 && (
-                 <div className="mb-4">
-                    <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Leadership</h2>
-                    <div className="space-y-3">
-                       {resumeData.leadership.map((exp, i) => (
-                         <div key={i} className="text-[11px] leading-tight">
-                            <div className="flex justify-between items-baseline font-bold">
-                               <span>{exp.role}</span>
-                               <span>{exp.startDate} — {exp.current ? "Present" : exp.endDate}</span>
-                            </div>
-                            <div className="flex justify-between items-baseline italic mb-1">
-                               <span>{exp.company}</span>
-                            </div>
-                            {exp.description && (
-                              <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                                 {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                                   <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
+               {/* Render sections dynamically based on enabledSections order */}
+               {enabledSections.map((secId) => {
+                  switch (secId) {
+                     case "summary":
+                        return resumeData.summary ? (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Professional Summary</h2>
+                              <p className="text-[11px] leading-tight text-slate-800">{resumeData.summary}</p>
+                           </div>
+                        ) : null;
+                     
+                     case "objective":
+                        return resumeData.objective ? (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Objective</h2>
+                              <p className="text-[11px] leading-tight text-slate-800">{resumeData.objective}</p>
+                           </div>
+                        ) : null;
+                        
+                     case "education":
+                        return (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Education</h2>
+                              <div className="space-y-2">
+                                 {resumeData.education.length > 0 ? resumeData.education.map((edu, i) => (
+                                   <div key={i} className="text-[11px] leading-tight">
+                                      <div className="flex justify-between items-baseline font-bold">
+                                         <span>{edu.school}</span>
+                                         <span>{edu.location}</span>
+                                      </div>
+                                      <div className="flex justify-between items-baseline italic">
+                                         <span>{edu.degree}{edu.minor ? `, Minor in ${edu.minor}` : ""}</span>
+                                         <span className="not-italic">{edu.startDate} — {edu.endDate}</span>
+                                      </div>
+                                      {edu.gpa && <div className="text-[10.5px]">GPA: {edu.gpa}</div>}
+                                   </div>
+                                 )) : (
+                                    <div className="text-[11px] text-slate-400 italic">No education provided yet...</div>
+                                 )}
+                              </div>
+                           </div>
+                        );
+                        
+                     case "experience":
+                        return (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Experience</h2>
+                              <div className="space-y-3">
+                                 {resumeData.experience.length > 0 ? resumeData.experience.map((exp, i) => (
+                                   <div key={i} className="text-[11px] leading-tight">
+                                      <div className="flex justify-between items-baseline font-bold">
+                                         <span>{exp.role}</span>
+                                         <span>{exp.startDate} — {exp.current ? "Present" : exp.endDate}</span>
+                                      </div>
+                                      <div className="flex justify-between items-baseline italic mb-1">
+                                         <span>{exp.company}</span>
+                                         <span>{exp.location}</span>
+                                      </div>
+                                      {exp.description && (
+                                        <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                           {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
+                                             <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
+                                           ))}
+                                        </ul>
+                                      )}
+                                   </div>
+                                 )) : (
+                                    <div className="text-[11px] text-slate-400 italic">No work experience provided yet...</div>
+                                 )}
+                              </div>
+                           </div>
+                        );
+                        
+                     case "projects":
+                        return (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Projects</h2>
+                              <div className="space-y-3">
+                                 {resumeData.projects.length > 0 ? resumeData.projects.map((proj, i) => (
+                                   <div key={i} className="text-[11px] leading-tight">
+                                      <div className="flex justify-between items-baseline font-bold">
+                                         <span>{proj.name}</span>
+                                         <span>{proj.startDate} — {proj.current ? "Present" : proj.endDate}</span>
+                                      </div>
+                                      {proj.tech && <div className="italic text-[10.5px] mb-1">{proj.tech}</div>}
+                                      {proj.description && (
+                                        <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                           {proj.description.split('\n').filter(l => l.trim()).map((line, j) => (
+                                             <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
+                                           ))}
+                                        </ul>
+                                      )}
+                                   </div>
+                                 )) : (
+                                    <div className="text-[11px] text-slate-400 italic">No projects provided yet...</div>
+                                 )}
+                              </div>
+                           </div>
+                        );
+                        
+                     case "skills":
+                        return (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Skills</h2>
+                              <div className="space-y-1">
+                                 {resumeData.skills.length > 0 ? resumeData.skills.map((cat, i) => (
+                                    <div key={i} className="text-[11px] leading-tight">
+                                       <span className="font-bold">{cat.name}: </span>
+                                       <span>{cat.skills.join(", ")}</span>
+                                    </div>
+                                 )) : (
+                                    <div className="text-[11px] text-slate-400 italic">No skills provided yet...</div>
+                                 )}
+                              </div>
+                           </div>
+                        );
+                        
+                     case "leadership":
+                        return resumeData.leadership.length > 0 ? (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Leadership</h2>
+                              <div className="space-y-3">
+                                 {resumeData.leadership.map((exp, i) => (
+                                   <div key={i} className="text-[11px] leading-tight">
+                                      <div className="flex justify-between items-baseline font-bold">
+                                         <span>{exp.role}</span>
+                                         <span>{exp.startDate} — {exp.current ? "Present" : exp.endDate}</span>
+                                      </div>
+                                      <div className="flex justify-between items-baseline italic mb-1">
+                                         <span>{exp.company}</span>
+                                      </div>
+                                      {exp.description && (
+                                        <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                           {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
+                                             <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
+                                           ))}
+                                        </ul>
+                                      )}
+                                   </div>
                                  ))}
-                              </ul>
-                            )}
-                         </div>
-                       ))}
-                    </div>
-               </div>
-               )}
-
-               {/* Projects Section */}
-               <div className="mb-4">
-                  <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Projects</h2>
-                  <div className="space-y-3">
-                     {resumeData.projects.length > 0 ? resumeData.projects.map((proj, i) => (
-                       <div key={i} className="text-[11px] leading-tight">
-                          <div className="flex justify-between items-baseline font-bold">
-                             <span>{proj.name}</span>
-                             <span>{proj.startDate} — {proj.current ? "Present" : proj.endDate}</span>
-                          </div>
-                          {proj.tech && <div className="italic text-[10.5px] mb-1">{proj.tech}</div>}
-                          {proj.description && (
-                            <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                               {proj.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                                 <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                               ))}
-                            </ul>
-                          )}
-                       </div>
-                     )) : (
-                        <div className="text-[11px] text-slate-400 italic">No projects provided yet...</div>
-                     )}
-                  </div>
-               </div>
-
-               {/* Research Section */}
-               {resumeData.research.length > 0 && (
-                 <div className="mb-4">
-                    <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Research</h2>
-                    <div className="space-y-3">
-                       {resumeData.research.map((res, i) => (
-                         <div key={i} className="text-[11px] leading-tight">
-                            <div className="flex justify-between items-baseline font-bold">
-                               <span>{res.name}</span>
-                               <span>{res.startDate}</span>
-                            </div>
-                            {res.tech && <div className="italic text-[10.5px] mb-1">{res.tech}</div>}
-                            <p className="text-[10.5px] leading-tight text-slate-800 whitespace-pre-line">{res.description}</p>
-                         </div>
-                       ))}
-                    </div>
-               </div>
-               )}
-
-               {/* Skills Section */}
-               <div className="mb-4">
-                  <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Skills</h2>
-                  <div className="space-y-1">
-                     {resumeData.skills.length > 0 ? resumeData.skills.map((cat, i) => (
-                        <div key={i} className="text-[11px] leading-tight">
-                           <span className="font-bold">{cat.name}: </span>
-                           <span>{cat.skills.join(", ")}</span>
-                        </div>
-                     )) : (
-                        <div className="text-[11px] text-slate-400 italic">No skills provided yet...</div>
-                     )}
-                  </div>
-               </div>
-
-               {/* Awards & Publications */}
-               <div className="grid grid-cols-2 gap-8 mb-4">
-                  {resumeData.awards.length > 0 && (
-                    <div>
-                       <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Awards & Honors</h2>
-                       <div className="space-y-2">
-                          {resumeData.awards.map((award, i) => (
-                             <div key={i} className="text-[11px] leading-tight">
-                                <div className="flex justify-between font-bold">
-                                   <span>{award.title}</span>
-                                   <span>{award.date}</span>
-                                </div>
-                                <div className="text-[10.5px] italic text-slate-600">{award.issuer}</div>
-               </div>
-                          ))}
-                       </div>
-               </div>
-                  )}
-                  {resumeData.publications.length > 0 && (
-                    <div>
-                       <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Publications</h2>
-                       <div className="space-y-2">
-                          {resumeData.publications.map((pub, i) => (
-                             <div key={i} className="text-[11px] leading-tight">
-                                <div className="flex justify-between font-bold">
-                                   <span>{pub.title}</span>
-                                   <span>{pub.date}</span>
-                                </div>
-                                <div className="text-[10.5px] italic text-slate-600">{pub.publisher}</div>
-               </div>
-                          ))}
-                       </div>
-               </div>
-                  )}
-               </div>
-
-                {/* Certifications Section */}
-                {resumeData.certifications.length > 0 && (
-                   <div className="mb-4">
-                      <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Certifications</h2>
-                      <div className="space-y-1">
-                         {resumeData.certifications.map((cert, i) => (
-                            <div key={i} className="text-[11px] leading-tight flex justify-between">
-                               <div>
-                                  <span className="font-bold">{cert.name}</span> — <span>{cert.issuer}</span>
-                               </div>
-                               <span>{cert.dateObtained}</span>
-                            </div>
-                         ))}
-                      </div>
-               </div>
-                )}
+                              </div>
+                           </div>
+                        ) : null;
+                        
+                     case "research":
+                        return resumeData.research.length > 0 ? (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Research</h2>
+                              <div className="space-y-3">
+                                 {resumeData.research.map((res, i) => (
+                                   <div key={i} className="text-[11px] leading-tight">
+                                      <div className="flex justify-between items-baseline font-bold">
+                                         <span>{res.name}</span>
+                                         <span>{res.startDate}</span>
+                                      </div>
+                                      {res.tech && <div className="italic text-[10.5px] mb-1">{res.tech}</div>}
+                                      <p className="text-[10.5px] leading-tight text-slate-800 whitespace-pre-line">{res.description}</p>
+                                   </div>
+                                 ))}
+                              </div>
+                           </div>
+                        ) : null;
+                        
+                     case "certifications":
+                        return resumeData.certifications.length > 0 ? (
+                           <div key={secId} className="mb-4">
+                              <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Certifications</h2>
+                              <div className="space-y-1">
+                                 {resumeData.certifications.map((cert, i) => (
+                                    <div key={i} className="text-[11px] leading-tight flex justify-between">
+                                       <div>
+                                          <span className="font-bold">{cert.name}</span> — <span>{cert.issuer}</span>
+                                       </div>
+                                       <span>{cert.dateObtained}</span>
+                                    </div>
+                                 ))}
+                              </div>
+                           </div>
+                        ) : null;
+                        
+                     case "awards":
+                     case "publications":
+                        // Combine Awards and Publications side-by-side if they both exist and we hit the first one
+                        if (secId === "awards" || (secId === "publications" && !enabledSections.includes("awards"))) {
+                           return (resumeData.awards.length > 0 || resumeData.publications.length > 0) ? (
+                              <div key="awards-pubs" className="grid grid-cols-2 gap-8 mb-4">
+                                 {resumeData.awards.length > 0 && enabledSections.includes("awards") && (
+                                   <div>
+                                      <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Awards & Honors</h2>
+                                      <div className="space-y-2">
+                                         {resumeData.awards.map((award, i) => (
+                                            <div key={i} className="text-[11px] leading-tight">
+                                               <div className="flex justify-between font-bold">
+                                                  <span>{award.title}</span>
+                                                  <span>{award.date}</span>
+                                               </div>
+                                               <div className="text-[10.5px] italic text-slate-600">{award.issuer}</div>
+                                            </div>
+                                         ))}
+                                      </div>
+                                   </div>
+                                 )}
+                                 {resumeData.publications.length > 0 && enabledSections.includes("publications") && (
+                                   <div>
+                                      <h2 className="text-[13px] font-bold border-b border-black pb-0.5 mb-1.5 uppercase tracking-wider">Publications</h2>
+                                      <div className="space-y-2">
+                                         {resumeData.publications.map((pub, i) => (
+                                            <div key={i} className="text-[11px] leading-tight">
+                                               <div className="flex justify-between font-bold">
+                                                  <span>{pub.title}</span>
+                                                  <span>{pub.date}</span>
+                                               </div>
+                                               <div className="text-[10.5px] italic text-slate-600">{pub.publisher}</div>
+                                            </div>
+                                         ))}
+                                      </div>
+                                   </div>
+                                 )}
+                              </div>
+                           ) : null;
+                        }
+                        return null; // Skip "publications" alone if "awards" handled it
+                        
+                     default:
+                        return null;
+                  }
+               })}
 
             </div>
                </div>
@@ -1147,6 +1343,14 @@ export default function ResumesPage() {
                        <div className="space-y-6">
                           {resumeData.experience.map((exp, idx) => (
                              <div key={idx} className="p-6 bg-slate-50 border border-slate-200 rounded-3xl space-y-4 relative group shadow-sm">
+                                <div className="absolute -left-3 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all bg-white p-1 rounded-xl shadow-lg border border-slate-100">
+                                   <button onClick={() => moveItemInList("experience", idx, "up")} disabled={idx === 0} className="p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400">
+                                      <ChevronUp className="w-4 h-4" />
+                                   </button>
+                                   <button onClick={() => moveItemInList("experience", idx, "down")} disabled={idx === resumeData.experience.length - 1} className="p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400">
+                                      <ChevronDown className="w-4 h-4" />
+                                   </button>
+                                </div>
                                 <button onClick={() => removeListItem("experience", idx)} className="absolute -top-2 -right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all shadow-lg">
                                    <Plus className="w-4 h-4 rotate-45" />
                                 </button>
@@ -1196,6 +1400,14 @@ export default function ResumesPage() {
                        <div className="space-y-6">
                           {resumeData.education.map((edu, idx) => (
                              <div key={idx} className="p-6 bg-slate-50 border border-slate-200 rounded-3xl space-y-4 relative group shadow-sm">
+                                <div className="absolute -left-3 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all bg-white p-1 rounded-xl shadow-lg border border-slate-100">
+                                   <button onClick={() => moveItemInList("education", idx, "up")} disabled={idx === 0} className="p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400">
+                                      <ChevronUp className="w-4 h-4" />
+                                   </button>
+                                   <button onClick={() => moveItemInList("education", idx, "down")} disabled={idx === resumeData.education.length - 1} className="p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400">
+                                      <ChevronDown className="w-4 h-4" />
+                                   </button>
+                                </div>
                                 <button onClick={() => removeListItem("education", idx)} className="absolute -top-2 -right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all shadow-lg">
                                    <Plus className="w-4 h-4 rotate-45" />
                                 </button>
@@ -1568,6 +1780,79 @@ export default function ResumesPage() {
                         </button>
                      </div>
                   </div>
+               </div>
+            </div>
+         </div>
+      )}
+      {showTailorReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+           <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+              <div className="p-8 pb-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+                 <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+                       <Check className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <div>
+                       <h2 className="text-xl font-bold text-slate-900">Tailoring Complete</h2>
+                       <p className="text-sm text-slate-500">Match score: <span className="font-bold text-purple-600">{matchScore}%</span></p>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowTailorReport(false)} className="text-slate-400 hover:text-slate-900">
+                     <X className="w-6 h-6" />
+                  </button>
+               </div>
+               
+               <div className="p-8 overflow-y-auto space-y-8 bg-slate-50">
+                  {tailorChanges && tailorChanges.length > 0 && (
+                     <div className="space-y-3">
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">Changes Made</h3>
+                        <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-2">
+                           {tailorChanges.map((change, i) => (
+                              <div key={i} className="flex gap-3 text-sm text-slate-700">
+                                 <Sparkles className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                                 <p>{change}</p>
+                              </div>
+                           ))}
+                        </div>
+                     </div>
+                  )}
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     {tailorMatched && tailorMatched.length > 0 && (
+                        <div className="space-y-3">
+                           <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-600">Matched Skills</h3>
+                           <div className="flex flex-wrap gap-2">
+                              {tailorMatched.map((skill, i) => (
+                                 <span key={i} className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">
+                                    {skill}
+                                 </span>
+                              ))}
+                           </div>
+                        </div>
+                     )}
+                     {tailorMissing && tailorMissing.length > 0 && (
+                        <div className="space-y-3">
+                           <h3 className="text-sm font-bold uppercase tracking-wider text-amber-600">Missing Skills (Gaps)</h3>
+                           <div className="flex flex-wrap gap-2">
+                              {tailorMissing.map((skill, i) => (
+                                 <span key={i} className="px-3 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold border border-amber-200">
+                                    {skill}
+                                 </span>
+                              ))}
+                           </div>
+                           <p className="text-xs text-slate-500 italic mt-2">These skills were in the JD but not found in your resume.</p>
+                        </div>
+                     )}
+                  </div>
+               </div>
+               
+               <div className="p-6 border-t border-slate-100 bg-white shrink-0 flex justify-end">
+                  <button 
+                    onClick={() => setShowTailorReport(false)}
+                    className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition-all"
+                  >
+                     Review Updates
+                  </button>
                </div>
             </div>
          </div>

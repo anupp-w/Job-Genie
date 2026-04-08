@@ -27,11 +27,18 @@ except ImportError:
     CREWAI_AVAILABLE = False
     logger.warning("CrewAI not installed. Parsing will use basic text extraction fallback.")
 
+# --- Groq LLM for CrewAI ---
 try:
-    from langchain_openai import ChatOpenAI
+    from langchain_groq import ChatGroq
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
+    # Fallback to OpenAI if Groq not available
+    try:
+        from langchain_openai import ChatOpenAI
+        LANGCHAIN_AVAILABLE = True
+    except ImportError:
+        LANGCHAIN_AVAILABLE = False
 
 
 def _extract_text_from_pdf(file_path: str) -> str:
@@ -95,10 +102,10 @@ async def parse_resume_upload(file: UploadFile) -> dict:
             return _build_mock_resume("Candidate Name", "candidate@example.com", ["Python", "React"])
 
         # Step 2: Try CrewAI structured extraction
-        openai_key = os.getenv("OPENAI_API_KEY")
-        if CREWAI_AVAILABLE and LANGCHAIN_AVAILABLE and openai_key:
+        groq_key = os.getenv("GROQ_API_KEY")
+        if CREWAI_AVAILABLE and LANGCHAIN_AVAILABLE and groq_key:
             try:
-                return await _parse_with_crewai(raw_text, openai_key)
+                return await _parse_with_crewai(raw_text, groq_key)
             except Exception as e:
                 logger.error(f"CrewAI parsing failed, falling back to mock: {e}")
 
@@ -110,11 +117,11 @@ async def parse_resume_upload(file: UploadFile) -> dict:
             os.remove(tmp_path)
 
 
-async def _parse_with_crewai(raw_text: str, openai_key: str) -> dict:
-    """Use CrewAI two-agent pipeline to extract structured resume JSON."""
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        openai_api_key=openai_key,
+async def _parse_with_crewai(raw_text: str, groq_key: str) -> dict:
+    """Use CrewAI two-agent pipeline to extract structured resume JSON via Groq."""
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=groq_key,
         temperature=0
     )
 

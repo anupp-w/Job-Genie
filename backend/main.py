@@ -177,6 +177,111 @@ async def tailor_resume(request: schemas.TailorRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 from fastapi import UploadFile, File, Form
+
+# ──── Resumes Endpoints ────
+@app.get("/api/v1/resumes")
+def list_resumes(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    resumes = db.query(models.Resume).filter(models.Resume.user_id == current_user.id).order_by(models.Resume.updated_at.desc()).all()
+    results = []
+    for r in resumes:
+        sections = db.query(models.ResumeSection).filter(models.ResumeSection.resume_id == r.id).all()
+        results.append({
+            "id": r.id,
+            "title": r.title,
+            "ats_score": r.ats_score or 0,
+            "file_path": r.file_path,
+            "parsed_content": r.parsed_content,
+            "sections": [{"id": s.id, "section_type": s.section_type, "content": s.content, "order": s.order} for s in sections],
+            "updated": r.updated_at.isoformat() if r.updated_at else None
+        })
+    return results
+
+@app.post("/api/v1/resumes")
+def create_resume(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    import json
+    resume = models.Resume(
+        user_id=current_user.id,
+        title=payload.get("title", "Untitled Resume"),
+    )
+    db.add(resume)
+    db.flush()
+    
+    for sec in payload.get("sections", []):
+        section = models.ResumeSection(
+            resume_id=resume.id,
+            section_type=sec.get("section_type", "general"),
+            content=sec.get("content", ""),
+            order=sec.get("order", 0)
+        )
+        db.add(section)
+    
+    db.commit()
+    db.refresh(resume)
+    sections = db.query(models.ResumeSection).filter(models.ResumeSection.resume_id == resume.id).all()
+    return {
+        "id": resume.id,
+        "title": resume.title,
+        "ats_score": resume.ats_score or 0,
+        "file_path": resume.file_path,
+        "parsed_content": resume.parsed_content,
+        "sections": [{"id": s.id, "section_type": s.section_type, "content": s.content, "order": s.order} for s in sections],
+        "updated": resume.updated_at.isoformat() if resume.updated_at else None
+    }
+
+@app.get("/api/v1/resumes/{resume_id}")
+def get_resume(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    resume = db.query(models.Resume).filter(models.Resume.id == resume_id, models.Resume.user_id == current_user.id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    sections = db.query(models.ResumeSection).filter(models.ResumeSection.resume_id == resume.id).all()
+    return {
+        "id": resume.id,
+        "title": resume.title,
+        "ats_score": resume.ats_score or 0,
+        "file_path": resume.file_path,
+        "parsed_content": resume.parsed_content,
+        "sections": [{"id": s.id, "section_type": s.section_type, "content": s.content, "order": s.order} for s in sections],
+        "updated": resume.updated_at.isoformat() if resume.updated_at else None
+    }
+
+@app.delete("/api/v1/resumes/{resume_id}")
+def delete_resume(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    resume = db.query(models.Resume).filter(models.Resume.id == resume_id, models.Resume.user_id == current_user.id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    db.delete(resume)
+    db.commit()
+    return {"detail": "deleted"}
+
+@app.post("/api/v1/resumes/parse")
+async def parse_resume_for_builder(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    from app.services.parsing_service import parse_resume_upload
+    try:
+        parsed_data = await parse_resume_upload(file)
+        return {"parsed_data": parsed_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
+
 @app.post("/api/v1/parse")
 async def parse_resume_endpoint(file: UploadFile = File(...)):
     from app.services.parsing_service import parse_resume_upload
