@@ -27,6 +27,14 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetVerify(BaseModel):
+    email: EmailStr
+    reset_code: str
+    new_password: str
+
 class TailorRequest(BaseModel):
     resume_data: dict
     job_description: Optional[str] = None

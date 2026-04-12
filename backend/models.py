@@ -12,6 +12,8 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     profile_pic_url = Column(String, nullable=True)
     role = Column(String, default="user")
+    reset_code = Column(String, nullable=True)
+    reset_code_expire = Column(DateTime, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
     interview_sessions = relationship("InterviewSession", back_populates="user", cascade="all, delete-orphan")

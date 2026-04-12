@@ -26,3 +26,22 @@ def create_user(db: Session, user: schemas.UserCreate):
     db.commit()
     db.refresh(db_user)
     return db_user
+
+def set_reset_code(db: Session, email: str, code: str, expire_time):
+    db_user = get_user_by_email(db, email=email)
+    if db_user:
+        db_user.reset_code = code
+        db_user.reset_code_expire = expire_time
+        db.commit()
+        db.refresh(db_user)
+    return db_user
+
+def reset_password(db: Session, email: str, new_password: str):
+    db_user = get_user_by_email(db, email=email)
+    if db_user:
+        db_user.password_hash = get_password_hash(new_password)
+        db_user.reset_code = None
+        db_user.reset_code_expire = None
+        db.commit()
+        db.refresh(db_user)
+    return db_user

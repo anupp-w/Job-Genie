@@ -89,6 +89,42 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.post("/api/v1/auth/forgot-password")
+def forgot_password(payload: schemas.PasswordResetRequest, db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    import random
+    
+    # Always return success to avoid leaking which emails are registered
+    user = crud.get_user_by_email(db, email=payload.email)
+    if user:
+        reset_code = f"{random.randint(100000, 999999)}"
+        # Expire in 15 minutes
+        expire_time = datetime.now(timezone.utc) + timedelta(minutes=15)
+        
+        crud.set_reset_code(db, email=payload.email, code=reset_code, expire_time=expire_time)
+        try:
+            from app.utils.email import send_reset_code_email
+            send_reset_code_email(email_to=user.email, reset_code=reset_code)
+        except Exception as e:
+            print(f"Failed to send reset email: {e}")
+        
+    return {"message": "If an account exists, reset instructions were sent."}
+
+@app.post("/api/v1/auth/reset-password")
+def reset_password(payload: schemas.PasswordResetVerify, db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    user = crud.get_user_by_email(db, email=payload.email)
+    
+    if not user or user.reset_code != payload.reset_code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reset code")
+    
+    if user.reset_code_expire and user.reset_code_expire.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset code has expired")
+
+    crud.reset_password(db, email=payload.email, new_password=payload.new_password)
+    
+    return {"message": "Password successfully reset."}
+
 @app.get("/api/v1/users/me", response_model=schemas.UserResponse)
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
@@ -319,52 +355,110 @@ async def analyze_new_endpoint(
     job_description: str = Form("Software Engineer"),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    from app.services.parsing_service import parse_resume_upload
+    from app.services.parsing_service import parse_resume_upload, _extract_text_from_pdf
     from app.services.llm import extract_skills_from_text
     from sqlalchemy import func
-    import json
+    import json, re, tempfile, os, logging
     
-    # 1. Parse Resume if provided
+    # SETUP FILE LOGGING FOR DEBUGGING
+    logger = logging.getLogger("jobgenie.analysis.debug")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        fh = logging.FileHandler("analysis_debug.log")
+        fh.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        logger.addHandler(fh)
+        
+    logger.info(f"--- NEW ANALYSIS REQUEST ---")
+    logger.info(f"File provided: {file is not None}")
+    logger.info(f"Job Description Length: {len(job_description)}")
+    
+    # 1. Parse Resume if provided — extract BOTH structured data and raw text
     resume_data = {}
+    raw_resume_text = ""
     if file:
-        resume_data = await parse_resume_upload(file)
+        # Save the file to a temp location so we can extract raw text directly
+        file_bytes = await file.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        
+        try:
+            # Extract raw text directly from PDF (this almost never fails)
+            raw_resume_text = _extract_text_from_pdf(tmp_path)
+            logger.info(f"Raw PDF text extracted: {len(raw_resume_text)} chars")
+        except Exception as e:
+            logger.error(f"Raw text extraction failed: {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        
+        # Also try structured parsing (reset file position first)
+        await file.seek(0)
+        try:
+            resume_data = await parse_resume_upload(file)
+        except Exception as e:
+            logger.error(f"Structured parsing failed: {e}")
+            resume_data = {}
     
     # 2. Create Resume Record
     new_resume = models.Resume(
         user_id=current_user.id,
         title=f"Analysis - {file.filename if file else 'Input'}",
-        parsed_content=json.dumps(resume_data)
+        parsed_content=json.dumps(resume_data) if resume_data else json.dumps({"_raw_text": raw_resume_text[:2000]})
     )
     db.add(new_resume)
     db.flush()
     
     # 3. Extract and Link Resume Skills (Using AI)
-    resume_text_for_ai = json.dumps({
-        "experience": resume_data.get("experience", []),
-        "projects": resume_data.get("projects", []),
-        "skills": resume_data.get("skills", [])
-    })[:4000]
+    # PRIORITY: Use raw PDF text for skill extraction (most reliable)
+    # Only fall back to structured data if raw text is empty
+    resume_text_for_ai = ""
+    if raw_resume_text and len(raw_resume_text.strip()) > 50:
+        resume_text_for_ai = raw_resume_text[:4000]
+        logger.info("Using raw PDF text for resume skill extraction")
+    elif resume_data and any(resume_data.get(k) for k in ["experience", "projects", "skills"]):
+        resume_text_for_ai = json.dumps({
+            "experience": resume_data.get("experience", []),
+            "projects": resume_data.get("projects", []),
+            "skills": resume_data.get("skills", [])
+        })[:4000]
+        logger.info("Using structured parse data for resume skill extraction")
     
-    resume_skills_ai = extract_skills_from_text(resume_text_for_ai) if resume_text_for_ai else []
+    resume_skills_ai = []
+    if resume_text_for_ai:
+        resume_skills_ai = extract_skills_from_text(resume_text_for_ai)
+        logger.info(f"LLM extracted {len(resume_skills_ai)} resume skills: {resume_skills_ai}")
 
     # Fallback to existing parsed skills if AI fails
     if not resume_skills_ai and "skills" in resume_data:
         if isinstance(resume_data["skills"], list):
             for cat in resume_data["skills"]:
-                resume_skills_ai.extend(cat.get("items", []))
+                if isinstance(cat, dict):
+                    resume_skills_ai.extend(cat.get("items", []))
+                elif isinstance(cat, str):
+                    resume_skills_ai.append(cat)
         elif isinstance(resume_data["skills"], dict):
             for cat, items in resume_data["skills"].items():
                 if isinstance(items, list): resume_skills_ai.extend(items)
                 else: resume_skills_ai.append(str(items))
+        logger.info(f"Fallback extracted {len(resume_skills_ai)} resume skills")
 
     for skill_name in set(resume_skills_ai):
+        if not skill_name or not isinstance(skill_name, str):
+            continue
+        skill_name = skill_name.strip()
+        if not skill_name:
+            continue
         skill = db.query(models.Skill).filter(func.lower(models.Skill.name) == skill_name.lower()).first()
         if not skill:
             skill = models.Skill(name=skill_name[:255])
             db.add(skill)
             db.flush()
-        rs = models.ResumeSkill(resume_id=new_resume.id, skill_id=skill.id)
-        db.add(rs)
+        # Avoid duplicates
+        existing = db.query(models.ResumeSkill).filter_by(resume_id=new_resume.id, skill_id=skill.id).first()
+        if not existing:
+            rs = models.ResumeSkill(resume_id=new_resume.id, skill_id=skill.id)
+            db.add(rs)
 
     # 4. Create Job Record
     new_job = models.Job(
@@ -377,20 +471,36 @@ async def analyze_new_endpoint(
     
     # 5. Extract Job Skills (Using AI deeply against JD)
     job_skills_ai = extract_skills_from_text(job_description)
+    logger.info(f"LLM extracted {len(job_skills_ai)} job skills: {job_skills_ai}")
     
-    # If LLM failed, fallback to basic keyword matching
+    # If LLM failed, fallback to word-boundary matching (not substring!)
     if not job_skills_ai:
         all_skills = db.query(models.Skill).all()
-        job_skills_ai = [s.name for s in all_skills if s.name.lower() in job_description.lower()]
+        jd_lower = job_description.lower()
+        job_skills_ai = []
+        for s in all_skills:
+            # Use word boundary regex to avoid "Java" matching "JavaScript"
+            pattern = r'\b' + re.escape(s.name.lower()) + r'\b'
+            if re.search(pattern, jd_lower):
+                job_skills_ai.append(s.name)
+        logger.info(f"Fallback matched {len(job_skills_ai)} job skills from DB")
 
     for skill_name in set(job_skills_ai):
+        if not skill_name or not isinstance(skill_name, str):
+            continue
+        skill_name = skill_name.strip()
+        if not skill_name:
+            continue
         skill = db.query(models.Skill).filter(func.lower(models.Skill.name) == skill_name.lower()).first()
         if not skill:
             skill = models.Skill(name=skill_name[:255])
             db.add(skill)
             db.flush()
-        js = models.JobSkill(job_id=new_job.id, skill_id=skill.id, importance_weight=5)
-        db.add(js)
+        existing = db.query(models.JobSkill).filter_by(job_id=new_job.id, skill_id=skill.id).first()
+        if not existing:
+            js = models.JobSkill(job_id=new_job.id, skill_id=skill.id, importance_weight=5)
+            db.add(js)
+
     # 6. Create ResumeJobScore to permanently link this resume-job pair
     link = models.ResumeJobScore(
         resume_id=new_resume.id,
@@ -401,6 +511,7 @@ async def analyze_new_endpoint(
     db.add(link)
     
     db.commit()
+    logger.info(f"Analysis complete: resume #{new_resume.id}, job #{new_job.id}")
     
     return {
         "resume_id": new_resume.id,
