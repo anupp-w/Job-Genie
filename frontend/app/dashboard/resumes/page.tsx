@@ -39,9 +39,7 @@ import {
    X
 } from "lucide-react";
 import api from "@/services/api";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
-import { analyzeResume, type ResumeAnalysisResult } from "@/lib/resume-analyzer";
+import { generateResumeDocx } from "@/lib/pdf-generator";
 
 type ResumeResponse = {
    id: number;
@@ -239,6 +237,7 @@ export default function ResumesPage() {
    const [editingSection, setEditingSection] = useState<string | null>(null);
    const [enabledSections, setEnabledSections] = useState<string[]>(["personal", "summary", "experience", "projects", "education", "skills"]);
    const [showAddSectionModal, setShowAddSectionModal] = useState(false);
+   const [currentResumeId, setCurrentResumeId] = useState<number | null>(null);
    const [resumeData, setResumeData] = useState<ResumeData>({
       title: "Untitled Resume",
       personal: { firstName: "", lastName: "", phone: "", email: "", linkedin: "", github: "", website: "" },
@@ -348,8 +347,16 @@ export default function ResumesPage() {
                { section_type: "structured_data", content: JSON.stringify(resumeData), order: 0 }
             ]
          };
-         const res = await api.post<ResumeResponse>("/resumes", payload);
-         setResumes(prev => [res.data, ...prev.filter(r => r.id !== res.data.id)]); // prevent dups visually
+         let res;
+         if (currentResumeId) {
+            // Update existing resume
+            res = await api.put<ResumeResponse>(`/resumes/${currentResumeId}`, payload);
+         } else {
+            // Create new resume
+            res = await api.post<ResumeResponse>("/resumes", payload);
+            setCurrentResumeId(res.data.id);
+         }
+         setResumes(prev => [res.data, ...prev.filter(r => r.id !== res.data.id)]);
          alert("Resume saved successfully!");
       } catch (err: any) {
          setError("Failed to save resume.");
@@ -371,6 +378,19 @@ export default function ResumesPage() {
          if (data) {
             const normalized = normalizeResumeData(data);
             setResumeData({ ...normalized, title: res.title || normalized.title });
+            setCurrentResumeId(res.id);
+
+            // Dynamically enable sections that have content
+            const baseSections = ["personal", "summary", "experience", "projects", "education", "skills"];
+            const dynamicSections: string[] = [];
+            if (normalized.objective && normalized.objective.trim()) dynamicSections.push("objective");
+            if (Array.isArray(normalized.certifications) && normalized.certifications.length > 0) dynamicSections.push("certifications");
+            if (Array.isArray(normalized.leadership) && normalized.leadership.length > 0) dynamicSections.push("leadership");
+            if (Array.isArray(normalized.research) && normalized.research.length > 0) dynamicSections.push("research");
+            if (Array.isArray(normalized.awards) && normalized.awards.length > 0) dynamicSections.push("awards");
+            if (Array.isArray(normalized.publications) && normalized.publications.length > 0) dynamicSections.push("publications");
+            setEnabledSections([...new Set([...baseSections, ...dynamicSections])]);
+
             setViewMode("builder");
          } else {
             alert("This resume has no editable data.");
@@ -419,9 +439,14 @@ export default function ResumesPage() {
       }
    };
 
-   const handleDownloadPDF = useCallback(() => {
-      window.print();
-   }, []);
+   const handleDownloadPDF = useCallback(async () => {
+      try {
+         await generateResumeDocx(resumeData, enabledSections);
+      } catch (err) {
+         console.error("Document generation failed:", err);
+         alert("Download failed. Please try again.");
+      }
+   }, [resumeData, enabledSections]);
 
    const handleRunAnalysis = async () => {
       setIsAnalyzing(true);
@@ -625,6 +650,8 @@ export default function ResumesPage() {
                   <button
                      onClick={() => {
                         setResumeData({ title: "Untitled Resume", personal: { firstName: "", lastName: "", phone: "", email: "", linkedin: "", github: "", website: "" }, summary: "", objective: "", experience: [], projects: [], education: [], skills: [{ name: "Technical Skills", skills: [] }, { name: "Soft Skills", skills: [] }], certifications: [], leadership: [], research: [], awards: [], publications: [] });
+                        setCurrentResumeId(null);
+                        setEnabledSections(["personal", "summary", "experience", "projects", "education", "skills"]);
                         setViewMode("builder");
                      }}
                      className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-500/20 transition-all cursor-pointer whitespace-nowrap"
@@ -658,6 +685,7 @@ export default function ResumesPage() {
                                        const normalized = normalizeResumeData(parsedData);
                                        setResumeData(prev => ({ ...prev, ...normalized }));
                                     }
+                                    setCurrentResumeId(null);
                                     setViewMode("builder");
                                  } catch (err: any) {
                                     setError(err.message || "Failed to parse resume");
@@ -2006,21 +2034,33 @@ export default function ResumesPage() {
          )}
 
          <style jsx global>{`
-        @media print {
-          body * { visibility: hidden; }
-          .no-print { display: none !important; }
-          #resume-preview, #resume-preview * { visibility: visible; }
-          #resume-preview {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100% !important;
-            height: auto !important;
-            margin: 0 !important;
-            padding: 20mm !important;
-            box-shadow: none !important;
-          }
-        }
+         @page {
+           size: letter;
+           margin: 0;
+         }
+         @media print {
+           html, body {
+             margin: 0 !important;
+             padding: 0 !important;
+             -webkit-print-color-adjust: exact !important;
+             print-color-adjust: exact !important;
+           }
+           body * { visibility: hidden; }
+           .no-print { display: none !important; }
+           #resume-preview, #resume-preview * { visibility: visible; }
+           #resume-preview {
+             position: absolute;
+             left: 0;
+             top: 0;
+             width: 8.5in !important;
+             min-height: 11in !important;
+             height: auto !important;
+             margin: 0 !important;
+             padding: 0.4in 0.6in !important;
+             box-shadow: none !important;
+             transform: none !important;
+           }
+         }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb {

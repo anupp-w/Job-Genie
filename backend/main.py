@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from database import engine, Base, get_db
 import models, schemas, crud, auth
 
@@ -263,6 +264,50 @@ def create_resume(
     
     db.commit()
     db.refresh(resume)
+    sections = db.query(models.ResumeSection).filter(models.ResumeSection.resume_id == resume.id).all()
+    return {
+        "id": resume.id,
+        "title": resume.title,
+        "ats_score": resume.ats_score or 0,
+        "file_path": resume.file_path,
+        "parsed_content": resume.parsed_content,
+        "sections": [{"id": s.id, "section_type": s.section_type, "content": s.content, "order": s.order} for s in sections],
+        "updated": resume.updated_at.isoformat() if resume.updated_at else None
+    }
+
+@app.put("/api/v1/resumes/{resume_id}")
+def update_resume(
+    resume_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    resume = db.query(models.Resume).filter(models.Resume.id == resume_id, models.Resume.user_id == current_user.id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+        
+    if "title" in payload:
+        resume.title = payload["title"]
+        
+    # Delete old sections
+    db.query(models.ResumeSection).filter(models.ResumeSection.resume_id == resume.id).delete()
+    
+    # Add new sections
+    for sec in payload.get("sections", []):
+        section = models.ResumeSection(
+            resume_id=resume.id,
+            section_type=sec.get("section_type", "general"),
+            content=sec.get("content", ""),
+            order=sec.get("order", 0)
+        )
+        db.add(section)
+        
+    # Update timestamp
+    resume.updated_at = func.now()
+    
+    db.commit()
+    db.refresh(resume)
+    
     sections = db.query(models.ResumeSection).filter(models.ResumeSection.resume_id == resume.id).all()
     return {
         "id": resume.id,

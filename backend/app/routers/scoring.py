@@ -6,7 +6,7 @@ import json
 from database import get_db
 from auth import get_current_user
 from models import Resume, Job, ResumeJobScore
-from schemas import ScoreRequest, ScoreResponse, SubScore
+from schemas import AnalyzeRequest, ScoreResponse, SubScore
 
 from app.services.scoring import (
     compute_ats_score,
