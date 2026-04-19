@@ -3,10 +3,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 import json
 
-from app.database import get_db
-from app.auth import get_current_user
-from app.models import Resume, Job, ResumeJobScore
-from app.schemas import ScoreRequest, ScoreResponse, SubScore
+from database import get_db
+from auth import get_current_user
+from models import Resume, Job, ResumeJobScore
+from schemas import ScoreRequest, ScoreResponse, SubScore
 
 from app.services.scoring import (
     compute_ats_score,
@@ -20,35 +20,26 @@ from app.services.scoring import (
 
 router = APIRouter()
 
-@router.post("/{resume_id}/score", response_model=ScoreResponse)
-async def score_resume(
-    resume_id: int,
-    body: ScoreRequest,
+@router.post("/analyze", response_model=ScoreResponse)
+async def analyze_resume(
+    body: AnalyzeRequest,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == current_user.id).first()
-    if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
-        
-    text = resume.parsed_content
+    text = body.resume_text
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="Resume text is empty")
         
-    # Optional: if text is a JSON dump, try to get raw text or flatten
     try:
         data = json.loads(text)
         if isinstance(data, dict):
-            text = data.get("_raw_text", text)
-            if text == resume.parsed_content:
-                text = " ".join(str(v) for v in data.values())
+            text = " ".join(str(v) for v in data.values())
     except:
         pass
 
     if not text or not text.strip():
-        raise HTTPException(status_code=400, detail="Resume text is empty after JSON extraction")
+        raise HTTPException(status_code=400, detail="Resume text is empty after extraction")
 
-    # Run base scores
     ats_score, ats_exp = compute_ats_score(text)
     writing_score, write_exp = compute_writing_score(text)
     impact_score, impact_exp = compute_impact_score(text)
@@ -66,63 +57,32 @@ async def score_resume(
     }
 
     mode = "basic"
-    job_id = body.job_id
-    jd_text = ""
+    jd_text = body.job_description
     
-    if job_id:
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if job and job.description:
-            jd_text = job.description
-            
-            match_score, missing_kws, match_exp = compute_job_match_score(text, jd_text)
-            exp_score, exp_exp = compute_experience_score(text, jd_text)
-            
-            scores_dict["job_match"] = match_score
-            scores_dict["experience"] = exp_score
-            
-            response_scores["writing"].weight = 0.20
-            response_scores["impact"].weight = 0.15
-            
-            response_scores["job_match"] = SubScore(
-                score=match_score, weight=0.15, label=get_label(match_score), explanation=match_exp
-            )
-            
-            if exp_score is not None:
-                response_scores["experience"] = SubScore(
-                    score=exp_score, weight=0.10, label=get_label(exp_score), explanation=exp_exp
-                )
-            else:
-                response_scores["job_match"].weight = 0.25
-                
-            mode = "full"
-            
-            # Upsert into resume_job_scores
-            stmt = insert(ResumeJobScore).values(
-                resume_id=resume.id,
-                job_id=job.id,
-                match_score=match_score,
-                missing_keywords=missing_kws
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=['resume_id', 'job_id'],
-                set_={
-                    'match_score': stmt.excluded.match_score,
-                    'missing_keywords': stmt.excluded.missing_keywords
-                }
-            )
-            db.execute(stmt)
+    if jd_text:
+        match_score, missing_kws, match_exp = compute_job_match_score(text, jd_text)
+        exp_score, exp_exp = compute_experience_score(text, jd_text)
+        
+        # Keep job match isolated from the core score weights!
+        response_scores["job_match"] = SubScore(
+            score=match_score, weight=0.0, label=get_label(match_score), explanation=match_exp
+        )
+        mode = "full"
 
-    final, verdict = compute_final_score(scores_dict, has_jd=bool(job_id))
+    final, verdict = compute_final_score(scores_dict, has_jd=False)
     
-    resume.ats_score = ats_score
-    resume.writing_score = writing_score
-    resume.impact_score = impact_score
-    resume.final_score = final
-    
-    db.commit()
+    resume_id = body.resume_id
+    if resume_id:
+        resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == current_user.id).first()
+        if resume:
+            resume.ats_score = ats_score
+            resume.writing_score = writing_score
+            resume.impact_score = impact_score
+            resume.final_score = final
+            db.commit()
 
     return ScoreResponse(
-        resume_id=resume.id,
+        resume_id=resume_id,
         final_score=final,
         verdict=verdict,
         mode=mode,

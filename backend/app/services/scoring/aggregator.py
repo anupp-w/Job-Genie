@@ -1,13 +1,7 @@
 from typing import Dict, Optional, Tuple
 
 def compute_final_score(scores: Dict[str, Optional[int]], has_jd: bool) -> tuple[int, str]:
-    if not has_jd:
-        weights = {"ats": 0.40, "writing": 0.35, "impact": 0.25}
-    else:
-        weights = {"ats": 0.40, "writing": 0.20, "impact": 0.15, "job_match": 0.15, "experience": 0.10}
-        if scores.get("experience") is None:
-            weights["job_match"] += weights.pop("experience")
-            weights.pop("experience", None)
+    weights = {"ats": 0.40, "writing": 0.35, "impact": 0.25}
 
     final = round(sum(scores[k] * w for k, w in weights.items() if scores.get(k) is not None))
     

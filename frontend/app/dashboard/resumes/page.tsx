@@ -158,10 +158,11 @@ export default function ResumesPage() {
 
    // Analysis State
    const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
-   const [analysisResult, setAnalysisResult] = useState<ResumeAnalysisResult | null>(null);
+   const [analysisResult, setAnalysisResult] = useState<any | null>(null);
    const [analysisJd, setAnalysisJd] = useState("");
    const [isDownloading, setIsDownloading] = useState(false);
    const [isParsing, setIsParsing] = useState(false);
+   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
    // Preview Scaling
    const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -418,62 +419,46 @@ export default function ResumesPage() {
       }
    };
 
-   const handleDownloadPDF = useCallback(async () => {
-      const el = previewRef.current;
-      if (!el) return;
-      setIsDownloading(true);
+   const handleDownloadPDF = useCallback(() => {
+      window.print();
+   }, []);
+
+   const handleRunAnalysis = async () => {
+      setIsAnalyzing(true);
       try {
-         // Override lab() CSS variables to hex equivalents for html2canvas compatibility
-         const root = document.documentElement;
-         const overrides: Record<string, string> = {
-            "--background": "#ffffff",
-            "--foreground": "#0a0a0a",
-            "--muted": "#f5f5f5",
-            "--muted-foreground": "#737373",
-            "--border": "#e5e5e5",
-            "--ring": "#a1a1a1",
-            "--primary": "#171717",
-            "--primary-foreground": "#fafafa",
-         };
-         const originals: Record<string, string> = {};
-         for (const [key, val] of Object.entries(overrides)) {
-            originals[key] = root.style.getPropertyValue(key);
-            root.style.setProperty(key, val);
-         }
-
-         const canvas = await html2canvas(el, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-            windowWidth: 816,
-            windowHeight: 1056,
+         const textData = JSON.stringify(resumeData);
+         const res = await api.post("/resumes/analyze", {
+            resume_text: textData,
+            job_description: analysisJd || null
          });
-
-         // Restore original CSS variables
-         for (const [key, val] of Object.entries(originals)) {
-            if (val) root.style.setProperty(key, val);
-            else root.style.removeProperty(key);
-         }
-
-         const imgData = canvas.toDataURL("image/png");
-         const pdf = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
-         const pdfW = pdf.internal.pageSize.getWidth();
-         const pdfH = pdf.internal.pageSize.getHeight();
-         pdf.addImage(imgData, "PNG", 0, 0, pdfW, pdfH);
-         const fileName = (resumeData.title || "Resume").replace(/[^a-zA-Z0-9]/g, "_") + ".pdf";
-         pdf.save(fileName);
-      } catch (err) {
-         console.error("PDF generation failed:", err);
-         alert("PDF download failed. Please try again.");
+         
+         const data = res.data;
+         
+         const result = {
+            overallScore: data.final_score,
+            grade: data.verdict,
+            wordCount: textData.split(" ").length,
+            bulletCount: textData.split("description").length,
+            jdMatch: data.scores.job_match ? {
+               percentage: data.scores.job_match.score,
+               missingKeywords: data.scores.job_match.explanation.includes("Missing:") ? data.scores.job_match.explanation.split("Missing: ")[1].split(", ") : [],
+               foundKeywords: []
+            } : null,
+            breakdown: [
+               { category: "ATS Compliance", icon: "🤖", score: data.scores.ats.score, maxScore: 100, tips: [data.scores.ats.explanation] },
+               { category: "Writing Quality", icon: "✍️", score: data.scores.writing.score, maxScore: 100, tips: [data.scores.writing.explanation] },
+               { category: "Impact & Metrics", icon: "📈", score: data.scores.impact.score, maxScore: 100, tips: [data.scores.impact.explanation] }
+            ]
+         };
+         
+         setAnalysisResult(result);
+         setShowAnalysisPanel(true);
+      } catch(err) {
+         console.error("Analysis failed:", err);
+         alert("Analysis failed. Ensure the backend is running and try again.");
       } finally {
-         setIsDownloading(false);
+         setIsAnalyzing(false);
       }
-   }, [resumeData.title]);
-
-   const handleRunAnalysis = () => {
-      const result = analyzeResume(resumeData, analysisJd || undefined);
-      setAnalysisResult(result);
    };
 
    // Preview scaling effect
@@ -718,7 +703,7 @@ export default function ResumesPage() {
                               </div>
                               {res.ats_score > 0 && (
                                  <div className="px-3 py-1 bg-green-50 text-green-600 border border-green-200 rounded-xl text-xs font-black self-start mt-1">
-                                    {res.ats_score}% ATS
+                                    {((res.ats_score * 0.40) + ((res as any).writing_score || 70) * 0.35 + ((res as any).impact_score || 50) * 0.25).toFixed(0)}% Score
                                  </div>
                               )}
                            </div>
@@ -784,10 +769,11 @@ export default function ResumesPage() {
                   {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download PDF
                </button>
                <button
-                  onClick={() => { setShowAnalysisPanel(true); handleRunAnalysis(); }}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border border-emerald-200 rounded-xl"
+                  onClick={handleRunAnalysis}
+                  disabled={isAnalyzing}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border border-emerald-200 rounded-xl disabled:opacity-50"
                >
-                  <BarChart3 className="w-4 h-4" /> Analyze
+                  {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />} Analyze
                </button>
                <button
                   onClick={() => setShowTailorModal(true)}

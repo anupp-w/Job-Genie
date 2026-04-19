@@ -117,6 +117,11 @@ class InterviewAnswerResponse(BaseModel):
         from_attributes = True
 
 # --- Scoring Engine Schemas ---
+class AnalyzeRequest(BaseModel):
+    resume_text: str
+    job_description: Optional[str] = None
+    resume_id: Optional[int] = None
+
 class ScoreRequest(BaseModel):
     job_id: Optional[int] = None
 
@@ -127,7 +132,7 @@ class SubScore(BaseModel):
     explanation: str
 
 class ScoreResponse(BaseModel):
-    resume_id: int
+    resume_id: Optional[int] = None
     final_score: int
     verdict: str
     mode: str
