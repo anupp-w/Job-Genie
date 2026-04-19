@@ -65,6 +65,9 @@ _test_fix.py
 _debug_db.py
 _test_api.py
 add_columns.py
+3fad51446008_add_scoring_fields.py
+fix_research.py
+fix_page.py
 
 # workflow-agents
 .agents/

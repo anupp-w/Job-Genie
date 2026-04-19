@@ -1,5 +1,5 @@
 
-from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, Float, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, Float, DateTime, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -26,6 +26,9 @@ class Resume(Base):
     file_path = Column(String, nullable=True)
     parsed_content = Column(Text, nullable=True)
     ats_score = Column(Integer, default=0)
+    writing_score = Column(Integer, default=0)
+    impact_score = Column(Integer, default=0)
+    final_score = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     user = relationship("User", back_populates="resumes")
@@ -62,6 +65,10 @@ class ResumeJobScore(Base):
     match_score = Column(Integer)
     missing_keywords = Column(JSON)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('resume_id', 'job_id', name='uq_resume_job'),
+    )
     resume = relationship("Resume", back_populates="job_scores")
     job = relationship("Job", back_populates="resume_scores")
 

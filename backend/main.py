@@ -28,6 +28,9 @@ def read_root():
 from app.api.v1.endpoints import interviews
 app.include_router(interviews.router, prefix="/api/v1/interviews", tags=["interviews"])
 
+from app.routers.scoring import router as scoring_router
+app.include_router(scoring_router, prefix="/api/v1/resumes", tags=["scoring"])
+
 @app.post("/api/v1/users/signup", response_model=schemas.UserResponse)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db_user = crud.get_user_by_email(db, email=user.email)

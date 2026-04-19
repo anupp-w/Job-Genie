@@ -115,3 +115,20 @@ class InterviewAnswerResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# --- Scoring Engine Schemas ---
+class ScoreRequest(BaseModel):
+    job_id: Optional[int] = None
+
+class SubScore(BaseModel):
+    score: int
+    weight: float
+    label: str
+    explanation: str
+
+class ScoreResponse(BaseModel):
+    resume_id: int
+    final_score: int
+    verdict: str
+    mode: str
+    scores: dict[str, SubScore]
