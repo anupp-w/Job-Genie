@@ -36,7 +36,11 @@ import {
    BarChart3,
    Calendar,
    Eye,
-   X
+   X,
+   Shield,
+   PenTool,
+   TrendingUp,
+   FileText as FileTextIcon
 } from "lucide-react";
 import api from "@/services/api";
 import { generateResumeDocx } from "@/lib/pdf-generator";
@@ -161,6 +165,7 @@ export default function ResumesPage() {
    const [isDownloading, setIsDownloading] = useState(false);
    const [isParsing, setIsParsing] = useState(false);
    const [isAnalyzing, setIsAnalyzing] = useState(false);
+   const [showNavConfirm, setShowNavConfirm] = useState(false);
 
    // Preview Scaling
    const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -466,13 +471,13 @@ export default function ResumesPage() {
             bulletCount: textData.split("description").length,
             jdMatch: data.scores.job_match ? {
                percentage: data.scores.job_match.score,
-               missingKeywords: data.scores.job_match.explanation.includes("Missing:") ? data.scores.job_match.explanation.split("Missing: ")[1].split(", ") : [],
-               foundKeywords: []
+               missingKeywords: data.scores.job_match.missing_keywords || [],
+               foundKeywords: data.scores.job_match.found_keywords || [],
             } : null,
             breakdown: [
-               { category: "ATS Compliance", icon: "🤖", score: data.scores.ats.score, maxScore: 100, tips: [data.scores.ats.explanation] },
-               { category: "Writing Quality", icon: "✍️", score: data.scores.writing.score, maxScore: 100, tips: [data.scores.writing.explanation] },
-               { category: "Impact & Metrics", icon: "📈", score: data.scores.impact.score, maxScore: 100, tips: [data.scores.impact.explanation] }
+               { category: "ATS Compliance", iconType: "ats", score: data.scores.ats.score, maxScore: 100, tips: [data.scores.ats.explanation] },
+               { category: "Writing Quality", iconType: "writing", score: data.scores.writing.score, maxScore: 100, tips: [data.scores.writing.explanation] },
+               { category: "Impact & Metrics", iconType: "impact", score: data.scores.impact.score, maxScore: 100, tips: [data.scores.impact.explanation] }
             ]
          };
          
@@ -773,7 +778,7 @@ export default function ResumesPage() {
                   className="bg-transparent border-none focus:ring-0 text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors w-64 uppercase tracking-wider"
                />
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
                {matchScore !== null && (
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-lg animate-in fade-in slide-in-from-right-4 duration-500">
                      <div className="relative w-8 h-8 flex items-center justify-center">
@@ -789,12 +794,35 @@ export default function ResumesPage() {
                      </div>
                   </div>
                )}
+               <div className="relative">
+                  <button
+                     id="jd-toggle-btn"
+                     className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors border border-slate-200 rounded-xl"
+                     onClick={() => {
+                        const el = document.getElementById('jd-toolbar-dropdown');
+                        if (el) el.classList.toggle('hidden');
+                     }}
+                  >
+                     <FileTextIcon className="w-3.5 h-3.5" /> JD {analysisJd ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> : null}
+                     <ChevronDown className="w-3 h-3" />
+                  </button>
+                  <div id="jd-toolbar-dropdown" className="hidden absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 space-y-3">
+                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Paste Job Description</label>
+                     <textarea
+                        value={analysisJd}
+                        onChange={(e) => setAnalysisJd(e.target.value)}
+                        placeholder="Paste the target job description here for Job Match scoring..."
+                        className="w-full h-32 bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                     />
+                     <p className="text-[10px] text-slate-400">This JD is used for Job Match scoring and AI tailoring.</p>
+                  </div>
+               </div>
                <button
                   onClick={handleDownloadPDF}
                   disabled={isDownloading}
                   className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200 rounded-xl disabled:opacity-50"
                >
-                  {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download PDF
+                  {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download
                </button>
                <button
                   onClick={handleRunAnalysis}
@@ -804,17 +832,17 @@ export default function ResumesPage() {
                   {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />} Analyze
                </button>
                <button
-                  onClick={() => setShowTailorModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 transition-all rounded-xl shadow-lg shadow-purple-500/20"
+                  onClick={() => setShowNavConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 transition-colors rounded-xl disabled:opacity-50"
                >
                   <Sparkles className="w-4 h-4" /> Tailor to JD
                </button>
                <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-2 px-6 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors rounded-xl shadow-lg shadow-indigo-500/20 disabled:opacity-50"
+                  className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors rounded-xl disabled:opacity-50"
                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Save Progress
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Save
                </button>
             </div>
          </div>
@@ -899,20 +927,7 @@ export default function ResumesPage() {
                      </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-8">
-                     <button
-                        onClick={() => document.getElementById('resume-upload')?.click()}
-                        className="flex items-center gap-3 p-5 rounded-2xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 hover:border-slate-300 transition-all font-bold text-sm shadow-sm"
-                     >
-                        <Upload className="w-5 h-5 text-indigo-500" /> Import from PDF
-                     </button>
-                     <button
-                        onClick={() => setShowTailorModal(true)}
-                        className="flex items-center gap-3 p-5 rounded-2xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 hover:border-slate-300 transition-all font-bold text-sm shadow-sm"
-                     >
-                        <Sparkles className="w-5 h-5 text-purple-500" /> AI Tailoring
-                     </button>
-                  </div>
+
                </div>
             </div>
 
@@ -1905,129 +1920,135 @@ export default function ResumesPage() {
 
          {/* Analysis Modal */}
          {showAnalysisPanel && analysisResult && (
-            <div className="fixed inset-0 z-50 flex justify-end p-0 bg-slate-900/20 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex justify-end p-0 bg-slate-900/20 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setShowAnalysisPanel(false); }}>
                <div className="bg-white w-full max-w-lg h-full shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-300">
-                  <div className="p-8 space-y-8">
-                     <div className="flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur pb-4 z-10">
-                        <div className="space-y-1">
-                           <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                              <BarChart3 className="w-6 h-6 text-emerald-500" />
-                              Resume Analysis
-                           </h2>
+                  <div className="p-6 space-y-6">
+                     {/* Header */}
+                     <div className="flex items-center justify-between sticky top-0 bg-white/90 backdrop-blur pb-4 z-10 border-b border-slate-100">
+                        <div className="flex items-center gap-3">
+                           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
+                              <BarChart3 className="w-5 h-5 text-indigo-600" />
+                           </div>
+                           <div>
+                              <h2 className="text-lg font-bold text-slate-900">Resume Analysis</h2>
+                              <p className="text-xs text-slate-400">{analysisResult.wordCount} words · {analysisResult.bulletCount} bullet points</p>
+                           </div>
                         </div>
-                        <button onClick={() => setShowAnalysisPanel(false)} className="p-2 text-slate-400 hover:text-slate-900 bg-slate-100 rounded-full transition-colors">
+                        <button onClick={() => setShowAnalysisPanel(false)} className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors">
                            <X className="w-5 h-5" />
                         </button>
                      </div>
 
                      {/* Overall Score */}
-                     <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-3xl border border-slate-100">
-                        <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
-                           <svg className="w-full h-full -rotate-90">
-                              <circle cx="48" cy="48" r="42" fill="transparent" stroke="rgba(16, 185, 129, 0.1)" strokeWidth="8" />
-                              <circle cx="48" cy="48" r="42" fill="transparent" stroke={analysisResult.overallScore >= 70 ? "#10b981" : analysisResult.overallScore >= 50 ? "#f59e0b" : "#ef4444"} strokeWidth="8" strokeDasharray={264} strokeDashoffset={264 - (264 * analysisResult.overallScore) / 100} strokeLinecap="round" className="transition-all duration-1000" />
+                     <div className="flex items-center gap-5 p-5 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-2xl border border-slate-100">
+                        <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
+                           <svg className="w-full h-full -rotate-90" viewBox="0 0 96 96">
+                              <circle cx="48" cy="48" r="40" fill="transparent" stroke="rgba(0,0,0,0.04)" strokeWidth="7" />
+                              <circle cx="48" cy="48" r="40" fill="transparent"
+                                 stroke={analysisResult.overallScore >= 70 ? "#10b981" : analysisResult.overallScore >= 50 ? "#f59e0b" : "#ef4444"}
+                                 strokeWidth="7" strokeDasharray={251} strokeDashoffset={251 - (251 * analysisResult.overallScore) / 100}
+                                 strokeLinecap="round" className="transition-all duration-1000" />
                            </svg>
                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                              <span className="text-2xl font-black text-slate-900">{analysisResult.overallScore}</span>
+                              <span className="text-xl font-black text-slate-900">{analysisResult.overallScore}</span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Score</span>
                            </div>
                         </div>
-                        <div className="space-y-2">
-                           <h3 className="text-lg font-bold text-slate-900">Overall Score: <span className={analysisResult.overallScore >= 70 ? "text-emerald-500" : analysisResult.overallScore >= 50 ? "text-amber-500" : "text-red-500"}>{analysisResult.grade}</span></h3>
-                           <p className="text-xs text-slate-500 leading-relaxed">
-                              Your resume has {analysisResult.wordCount} words and {analysisResult.bulletCount} bullet points.
+                        <div className="space-y-1.5">
+                           <p className="text-sm font-bold text-slate-900">
+                              Verdict: <span className={analysisResult.overallScore >= 70 ? "text-emerald-600" : analysisResult.overallScore >= 50 ? "text-amber-500" : "text-red-500"}>{analysisResult.grade}</span>
                            </p>
-                        </div>
-                     </div>
-
-                     {/* JD Match Section */}
-                     <div className="space-y-4">
-                        <div className="space-y-2">
-                           <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">ATS Keyword Check</label>
-                           <textarea
-                              value={analysisJd}
-                              onChange={(e) => setAnalysisJd(e.target.value)}
-                              placeholder="Paste a job description here and click Analyze to check ATS keywords..."
-                              className="w-full h-24 bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
-                           />
-                           <button
-                              onClick={handleRunAnalysis}
-                              className="w-full py-2 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl hover:bg-emerald-200 transition-colors"
-                           >
-                              Refresh Analysis
-                           </button>
-                        </div>
-
-                        {analysisResult.jdMatch && (
-                           <div className="p-5 bg-white border border-emerald-100 rounded-2xl space-y-4 shadow-sm">
-                              <div className="flex justify-between items-center">
-                                 <span className="font-bold text-slate-900 text-sm">Keyword Match</span>
-                                 <span className="font-black text-emerald-600">{analysisResult.jdMatch.percentage}%</span>
-                              </div>
-
-                              {analysisResult.jdMatch.missingKeywords.length > 0 && (
-                                 <div className="space-y-2">
-                                    <p className="text-xs font-bold text-rose-500">Missing Keywords to Add:</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                       {analysisResult.jdMatch.missingKeywords.map((kw, i) => (
-                                          <span key={i} className="px-2 py-1 bg-rose-50 text-rose-600 rounded text-[10px] font-bold">{kw}</span>
-                                       ))}
-                                    </div>
-                                 </div>
-                              )}
-
-                              {analysisResult.jdMatch.foundKeywords.length > 0 && (
-                                 <div className="space-y-2">
-                                    <p className="text-xs font-bold text-emerald-600">Matched Keywords:</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                       {analysisResult.jdMatch.foundKeywords.slice(0, 10).map((kw, i) => (
-                                          <span key={i} className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">{kw}</span>
-                                       ))}
-                                       {analysisResult.jdMatch.foundKeywords.length > 10 && (
-                                          <span className="px-2 py-1 bg-slate-50 text-slate-500 rounded text-[10px] font-bold">+{analysisResult.jdMatch.foundKeywords.length - 10} more</span>
-                                       )}
-                                    </div>
-                                 </div>
-                              )}
+                           <div className="flex gap-3 text-[10px] text-slate-400">
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> 70+ Strong</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" /> 50-69 Fair</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> &lt;50 Weak</span>
                            </div>
-                        )}
-                     </div>
-
-                     {/* Breakdown */}
-                     <div className="space-y-4">
-                        <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">Analysis Breakdown</h3>
-                        <div className="space-y-6">
-                           {analysisResult.breakdown.map((cat, i) => (
-                              <div key={i} className="space-y-3">
-                                 <div className="flex justify-between items-end">
-                                    <div className="flex items-center gap-2">
-                                       <span className="text-base">{cat.icon}</span>
-                                       <span className="font-bold text-sm text-slate-700">{cat.category}</span>
-                                    </div>
-                                    <span className="text-xs font-bold text-slate-400">{cat.score}/{cat.maxScore}</span>
-                                 </div>
-
-                                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                    <div
-                                       className={`h-full rounded-full ${cat.score === cat.maxScore ? 'bg-emerald-500' : cat.score >= cat.maxScore * 0.5 ? 'bg-amber-400' : 'bg-rose-500'}`}
-                                       style={{ width: `${(cat.score / cat.maxScore) * 100}%` }}
-                                    />
-                                 </div>
-
-                                 {cat.tips.length > 0 && (
-                                    <ul className="space-y-1.5 mt-2">
-                                       {cat.tips.map((tip, j) => (
-                                          <li key={j} className="text-[11px] text-slate-500 flex items-start gap-1.5">
-                                             <ArrowLeft className="w-3 h-3 text-amber-500 shrink-0 mt-0.5 rotate-180" />
-                                             <span>{tip}</span>
-                                          </li>
-                                       ))}
-                                    </ul>
-                                 )}
-                              </div>
-                           ))}
                         </div>
                      </div>
 
+                     {/* Job Match Score (only if JD was provided) */}
+                     {analysisResult.jdMatch && (
+                        <div className="space-y-3 p-5 bg-white border border-slate-100 rounded-2xl">
+                           <div className="flex justify-between items-center">
+                              <div className="flex items-center gap-2">
+                                 <Target className="w-4 h-4 text-indigo-500" />
+                                 <span className="font-bold text-sm text-slate-900">Job Match Score</span>
+                              </div>
+                              <span className={`text-lg font-black ${analysisResult.jdMatch.percentage >= 70 ? "text-emerald-600" : analysisResult.jdMatch.percentage >= 40 ? "text-amber-500" : "text-red-500"}`}>{analysisResult.jdMatch.percentage}%</span>
+                           </div>
+                           <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full transition-all duration-700 ${analysisResult.jdMatch.percentage >= 70 ? "bg-emerald-500" : analysisResult.jdMatch.percentage >= 40 ? "bg-amber-400" : "bg-red-500"}`} style={{ width: `${analysisResult.jdMatch.percentage}%` }} />
+                           </div>
+
+                           {analysisResult.jdMatch.foundKeywords.length > 0 && (
+                              <div className="space-y-1.5">
+                                 <p className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1"><Check className="w-3 h-3" /> Matched Keywords</p>
+                                 <div className="flex flex-wrap gap-1">
+                                    {analysisResult.jdMatch.foundKeywords.slice(0, 12).map((kw: string, i: number) => (
+                                       <span key={i} className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md text-[10px] font-medium">{kw}</span>
+                                    ))}
+                                    {analysisResult.jdMatch.foundKeywords.length > 12 && (
+                                       <span className="px-2 py-0.5 bg-slate-50 text-slate-500 rounded-md text-[10px] font-medium">+{analysisResult.jdMatch.foundKeywords.length - 12} more</span>
+                                    )}
+                                 </div>
+                              </div>
+                           )}
+
+                           {analysisResult.jdMatch.missingKeywords.length > 0 && (
+                              <div className="space-y-1.5">
+                                 <p className="text-[11px] font-semibold text-red-500 flex items-center gap-1"><X className="w-3 h-3" /> Missing Keywords</p>
+                                 <div className="flex flex-wrap gap-1">
+                                    {analysisResult.jdMatch.missingKeywords.map((kw: string, i: number) => (
+                                       <span key={i} className="px-2 py-0.5 bg-red-50 text-red-600 rounded-md text-[10px] font-medium">{kw}</span>
+                                    ))}
+                                 </div>
+                              </div>
+                           )}
+                        </div>
+                     )}
+
+                     {/* Score Breakdown */}
+                     <div className="space-y-4">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Score Breakdown</h3>
+                        <div className="space-y-3">
+                           {analysisResult.breakdown.map((cat: any, i: number) => {
+                              const IconComponent = cat.iconType === "ats" ? Shield : cat.iconType === "writing" ? PenTool : TrendingUp;
+                              const scoreColor = cat.score >= 70 ? "text-emerald-600" : cat.score >= 50 ? "text-amber-500" : "text-red-500";
+                              const barColor = cat.score >= 70 ? "bg-emerald-500" : cat.score >= 50 ? "bg-amber-400" : "bg-red-500";
+                              return (
+                                 <div key={i} className="p-4 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2.5">
+                                    <div className="flex justify-between items-center">
+                                       <div className="flex items-center gap-2.5">
+                                          <div className="w-7 h-7 rounded-lg bg-white border border-slate-100 flex items-center justify-center shadow-sm">
+                                             <IconComponent className="w-3.5 h-3.5 text-slate-600" />
+                                          </div>
+                                          <span className="font-semibold text-sm text-slate-800">{cat.category}</span>
+                                       </div>
+                                       <span className={`text-sm font-black ${scoreColor}`}>{cat.score}<span className="text-slate-300 font-normal">/{cat.maxScore}</span></span>
+                                    </div>
+
+                                    <div className="w-full h-1.5 bg-slate-200/60 rounded-full overflow-hidden">
+                                       <div className={`h-full rounded-full ${barColor} transition-all duration-700`} style={{ width: `${(cat.score / cat.maxScore) * 100}%` }} />
+                                    </div>
+
+                                    {cat.tips.length > 0 && cat.tips[0] && (
+                                       <p className="text-[11px] text-slate-500 leading-relaxed pl-1 border-l-2 border-slate-200">{cat.tips[0]}</p>
+                                    )}
+                                 </div>
+                              );
+                           })}
+                        </div>
+                     </div>
+
+                     {/* Re-analyze button */}
+                     <button
+                        onClick={handleRunAnalysis}
+                        disabled={isAnalyzing}
+                        className="w-full py-2.5 bg-indigo-50 text-indigo-700 font-bold text-xs rounded-xl hover:bg-indigo-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                     >
+                        {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5" />}
+                        Re-analyze Resume
+                     </button>
                   </div>
                </div>
             </div>
@@ -2069,6 +2090,44 @@ export default function ResumesPage() {
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
       `}</style>
+
+         {/* Navigation Confirmation Modal */}
+         {showNavConfirm && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm" onClick={() => setShowNavConfirm(false)}>
+               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+                  <div className="p-6 space-y-4">
+                     <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center">
+                           <Sparkles className="w-5 h-5 text-purple-600" />
+                        </div>
+                        <div>
+                           <h3 className="font-bold text-slate-900">Go to Tailor Page?</h3>
+                           <p className="text-xs text-slate-500">Your resume will be saved automatically.</p>
+                        </div>
+                     </div>
+                  </div>
+                  <div className="flex border-t border-slate-100">
+                     <button
+                        onClick={() => setShowNavConfirm(false)}
+                        className="flex-1 px-4 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50 transition-colors"
+                     >
+                        Stay Here
+                     </button>
+                     <button
+                        onClick={async () => {
+                           setShowNavConfirm(false);
+                           await handleSave();
+                           router.push("/dashboard/jobs");
+                        }}
+                        className="flex-1 px-4 py-3 text-sm font-bold text-purple-600 hover:bg-purple-50 transition-colors border-l border-slate-100"
+                     >
+                        Save & Continue
+                     </button>
+                  </div>
+               </div>
+            </div>
+         )}
+
       </div>
    );
 }

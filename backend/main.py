@@ -621,3 +621,5 @@ if __name__ == "__main__":
     import uvicorn
     # Bind to 0.0.0.0 to fix all localhost/network issues
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+# trigger reload

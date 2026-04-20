@@ -49,4 +49,8 @@ class TailorRequest(BaseModel):
 class TailorResponse(BaseModel):
     tailored_data: dict  # Matches frontend structured format
     match_score: int
+    original_match_score: int | None = None
     explanation: str
+    changes: List[str] = []
+    missing_skills: List[str] = []
+    matched_skills: List[str] = []

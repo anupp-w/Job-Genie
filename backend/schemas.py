@@ -130,6 +130,8 @@ class SubScore(BaseModel):
     weight: float
     label: str
     explanation: str
+    missing_keywords: Optional[list[str]] = None
+    found_keywords: Optional[list[str]] = None
 
 class ScoreResponse(BaseModel):
     resume_id: Optional[int] = None

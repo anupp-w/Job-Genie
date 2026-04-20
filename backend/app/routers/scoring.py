@@ -33,7 +33,63 @@ async def analyze_resume(
     try:
         data = json.loads(text)
         if isinstance(data, dict):
-            text = " ".join(str(v) for v in data.values())
+            # Extract meaningful resume text preserving bullet-point structure
+            parts = []
+            if data.get("summary"):
+                parts.append(data["summary"])
+            if data.get("objective"):
+                parts.append(data["objective"])
+            # Experience bullets
+            for exp in data.get("experience", []):
+                if exp.get("role"):
+                    parts.append(exp["role"])
+                if exp.get("description"):
+                    for line in exp["description"].split("\n"):
+                        line = line.strip()
+                        if line:
+                            # Ensure each bullet starts with a marker for the writing scorer
+                            if not line.startswith(("•", "-", "*")):
+                                line = "• " + line
+                            parts.append(line)
+            # Project bullets
+            for proj in data.get("projects", []):
+                if proj.get("name"):
+                    parts.append(proj["name"])
+                if proj.get("tech"):
+                    parts.append(proj["tech"])
+                if proj.get("description"):
+                    for line in proj["description"].split("\n"):
+                        line = line.strip()
+                        if line:
+                            if not line.startswith(("•", "-", "*")):
+                                line = "• " + line
+                            parts.append(line)
+            # Education
+            for edu in data.get("education", []):
+                if edu.get("degree"):
+                    parts.append(edu["degree"])
+                if edu.get("school"):
+                    parts.append(edu["school"])
+            # Skills
+            for cat in data.get("skills", []):
+                if cat.get("skills"):
+                    skills = cat["skills"] if isinstance(cat["skills"], list) else [cat["skills"]]
+                    parts.append(", ".join(str(s) for s in skills))
+            # Leadership, Research, Awards, etc.
+            for section_key in ["leadership", "research"]:
+                for item in data.get(section_key, []):
+                    if item.get("description"):
+                        for line in item["description"].split("\n"):
+                            line = line.strip()
+                            if line:
+                                if not line.startswith(("•", "-", "*")):
+                                    line = "• " + line
+                                parts.append(line)
+            # Certifications
+            for cert in data.get("certifications", []):
+                if cert.get("name"):
+                    parts.append(cert["name"])
+            text = "\n".join(parts)
     except:
         pass
 
@@ -60,12 +116,13 @@ async def analyze_resume(
     jd_text = body.job_description
     
     if jd_text:
-        match_score, missing_kws, match_exp = compute_job_match_score(text, jd_text)
+        match_score, missing_kws, found_kws, match_exp = compute_job_match_score(text, jd_text)
         exp_score, exp_exp = compute_experience_score(text, jd_text)
         
         # Keep job match isolated from the core score weights!
         response_scores["job_match"] = SubScore(
-            score=match_score, weight=0.0, label=get_label(match_score), explanation=match_exp
+            score=match_score, weight=0.0, label=get_label(match_score), explanation=match_exp,
+            missing_keywords=missing_kws, found_keywords=found_kws
         )
         mode = "full"
 
