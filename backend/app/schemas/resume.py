@@ -46,11 +46,28 @@ class TailorRequest(BaseModel):
     job_url: Optional[str] = None
 
 
+class SectionScores(BaseModel):
+    skills: float
+    experience: float
+    summary: float
+    education: float
+
+class ComparisonResult(BaseModel):
+    score_improvement: float
+    section_improvements: dict
+    added_keywords: List[str]
+    still_missing_keywords: List[str]
+    section_diffs: dict
+
 class TailorResponse(BaseModel):
-    tailored_data: dict  # Matches frontend structured format
-    match_score: int
-    original_match_score: int | None = None
+    tailored_data: dict
+    match_score: float
+    original_match_score: float
     explanation: str
-    changes: List[str] = []
-    missing_skills: List[str] = []
-    matched_skills: List[str] = []
+    changes: List[str]
+    missing_skills: List[str]
+    matched_skills: List[str]
+    iterations_run: int | None = 0
+    stop_reason: str | None = ""
+    comparison: ComparisonResult | None = None
+    section_scores: SectionScores | None = None

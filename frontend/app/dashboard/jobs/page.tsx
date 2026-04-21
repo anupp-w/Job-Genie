@@ -3,10 +3,13 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  FileText, Target, Sparkles, Loader2, ArrowRight, TrendingUp, Save, Search, RotateCcw
+  FileText, Target, Sparkles, Loader2, ArrowRight, TrendingUp, Save, Search, RotateCcw,
+  CheckCircle2, AlertCircle, BarChart3, Info
 } from "lucide-react";
 import api from "@/services/api";
 import ResumePreview, { ResumeData } from "@/components/ResumePreview";
+import { useToast } from "@/components/ui/toast-provider";
+import { getApiErrorMessage } from "@/lib/api-error";
 
 type ResumeResponse = {
   id: number;
@@ -17,18 +20,38 @@ type ResumeResponse = {
   updated?: string;
 };
 
+interface SectionScores {
+  skills: number;
+  experience: number;
+  summary: number;
+  education: number;
+}
+
+interface ComparisonResult {
+  score_improvement: number;
+  section_improvements: Record<string, number>;
+  added_keywords: string[];
+  still_missing_keywords: string[];
+  section_diffs: Record<string, string[]>;
+}
+
 interface TailorResponse {
   tailored_data: ResumeData;
   match_score: number;
-  original_match_score?: number | null;
+  original_match_score: number;
   explanation: string;
   changes: string[];
   missing_skills: string[];
   matched_skills: string[];
+  iterations_run: number;
+  stop_reason: string;
+  comparison: ComparisonResult;
+  section_scores: SectionScores;
 }
 
 export default function TailorPage() {
   const router = useRouter();
+  const toast = useToast();
 
   // Data state
   const [resumes, setResumes] = useState<ResumeResponse[]>([]);
@@ -42,11 +65,13 @@ export default function TailorPage() {
   const [result, setResult] = useState<TailorResponse | null>(null);
   const [originalResumeData, setOriginalResumeData] = useState<ResumeData | null>(null);
 
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [saveTitle, setSaveTitle] = useState("");
+
   useEffect(() => {
     fetchResumes();
   }, []);
 
-  // When selected resume changes, sync original data for preview
   useEffect(() => {
     if (selectedResumeId) {
       setOriginalResumeData(getSelectedResumeData());
@@ -70,6 +95,7 @@ export default function TailorPage() {
       }
     } catch (err) {
       console.error("Failed to fetch resumes", err);
+      toast.error("Could not load resumes", getApiErrorMessage(err, "Please refresh and try again."));
     } finally {
       setIsLoadingResumes(false);
     }
@@ -80,7 +106,6 @@ export default function TailorPage() {
     const res = resumes.find(r => r.id.toString() === selectedResumeId);
     if (!res) return null;
     
-    // Extract JSON payload from structured_data section as preferred source
     const structSection = res.sections?.find((s: any) => s.section_type === "structured_data");
     try {
       if (structSection && structSection.content) {
@@ -96,33 +121,34 @@ export default function TailorPage() {
 
   const handleTailor = async () => {
     if (!selectedResumeId) {
-      alert("Please select a resume to tailor.");
+      toast.warning("Select a resume", "Choose a source resume before tailoring.");
       return;
     }
+
     if (!jobDescription.trim()) {
-      alert("Please paste a job description.");
+      toast.warning("Job description required", "Paste the target job description to continue.");
       return;
     }
 
     const resumeData = getSelectedResumeData();
     if (!resumeData) {
-      alert("The selected resume does not contain valid structured data.");
+      toast.error("Resume data unavailable", "This resume has no valid structured data.");
       return;
     }
 
     setIsTailoring(true);
     setResult(null);
-    setTailorProgress("Analyst: Extracting Job DNA...");
+    setTailorProgress("JD Analysis...");
 
     const progressInterval = setInterval(() => {
       setTailorProgress(prev => {
-        if (prev.includes("Analyst")) return "Archaeologist: Finding hidden potential...";
-        if (prev.includes("Archaeologist")) return "Tactical Writer: Tailoring experience bullets...";
-        if (prev.includes("Tactical")) return "Optimizer: Finishing ATS polish...";
-        if (prev.includes("Optimizer")) return "Auditor: Evaluating match & quality...";
+        if (prev.includes("JD Analysis")) return "Rewriting Resume...";
+        if (prev.includes("Rewriting")) return "Scoring & Optimizing...";
+        if (prev.includes("Scoring")) return "Validating Skills...";
+        if (prev.includes("Validating")) return "Finalizing Results...";
         return prev;
       });
-    }, 4500);
+    }, 4000);
 
     try {
       const res = await api.post("/tailor", {
@@ -134,221 +160,245 @@ export default function TailorPage() {
       setResult(res.data);
     } catch (err: any) {
       clearInterval(progressInterval);
-      alert(err.response?.data?.detail || err.message || "Failed to tailor resume.");
+      toast.error("Tailoring failed", getApiErrorMessage(err, "Please try again in a moment."));
     } finally {
       setIsTailoring(false);
       setTailorProgress("");
     }
   };
 
-  const handleSaveTailored = async () => {
+  const handleOpenSaveModal = () => {
+    const originalTitle = resumes.find(r => r.id.toString() === selectedResumeId)?.title || "Resume";
+    setSaveTitle(`${originalTitle} - Tailored`);
+    setIsSaveModalOpen(true);
+  };
+
+  const executeSave = async () => {
     if (!result) return;
-    const newTitle = prompt("Enter a name for this tailored resume:", "Tailored Resume - Job Genie");
-    if (!newTitle) return;
+    if (!saveTitle.trim()) {
+      toast.warning("Title required", "Give your tailored resume a title before saving.");
+      return;
+    }
 
     try {
       const payload = {
-        title: newTitle,
+        title: saveTitle,
         sections: [
           { section_type: "structured_data", content: JSON.stringify(result.tailored_data), order: 0 }
         ]
       };
       await api.post("/resumes", payload);
+      setIsSaveModalOpen(false);
+      toast.success("Resume saved", "Your tailored resume was saved successfully.");
       router.push(`/dashboard/resumes`);
-      alert("Saved! You can now edit/download your tailored resume.");
-    } catch (err) {
-      console.error(err);
-      alert("Failed to save tailored resume.");
+    } catch (err: any) {
+      toast.error("Save failed", getApiErrorMessage(err, "Failed to save tailored resume."));
     }
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-12 max-w-[1600px] mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-6">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-[var(--foreground)] flex items-center gap-2">
-            <Target className="w-6 h-6 text-indigo-500" />
-            AI Resume Tailoring Squad
-          </h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
-            Our multi-agent LangGraph squad rewrites your resume using a cyclic feedback loop.
-          </p>
+    <div className="space-y-8 animate-in fade-in duration-700 pb-12 max-w-[1700px] mx-auto px-6">
+      {/* Header - Compact */}
+      <div className="flex items-center justify-between gap-6 border-b border-slate-100 pb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-100">
+            <Target className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900 leading-none">
+              Tailor Resume to JD
+            </h1>
+            <p className="text-slate-400 text-xs mt-1.5 font-medium">
+              Multi-agent LangGraph orchestration with ML semantic scoring.
+            </p>
+          </div>
         </div>
         {result && (
-          <div className="flex gap-3">
-            <button 
-              onClick={() => { setResult(null); setJobDescription(""); }}
-              className="px-4 py-2 text-sm font-bold text-[var(--muted)] hover:text-red-500 flex items-center gap-2 transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" /> Reset
+          <div className="flex gap-2">
+             <button 
+                onClick={() => { setResult(null); setJobDescription(""); }}
+                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-red-500 rounded-lg transition-all flex items-center gap-2"
+              >
+                <RotateCcw className="w-3 h-3" /> Start Over
             </button>
             <button 
-              onClick={handleSaveTailored}
-              className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 flex items-center gap-2 transition-all active:scale-95"
+              onClick={handleOpenSaveModal}
+              className="px-5 py-2 bg-indigo-600 hover:bg-slate-900 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-2 transition-all"
             >
-              <Save className="w-4 h-4" /> Save Tailored Resume
+              <Save className="w-3 h-3" /> Save Tailored Resume
             </button>
           </div>
         )}
       </div>
 
-      {!result ? (
-        /* Configuration View */
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="surface-panel p-8 rounded-[2rem] shadow-xl border border-[var(--border)] space-y-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                  <FileText className="w-4 h-4" /> Select Base Resume
-                </label>
-                <select 
-                  value={selectedResumeId}
-                  onChange={(e) => setSelectedResumeId(e.target.value)}
-                  disabled={isLoadingResumes || isTailoring}
-                  className="w-full h-14 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-4 text-sm text-[var(--foreground)] focus:ring-2 focus:ring-indigo-500 outline-none transition-all disabled:opacity-50"
-                >
-                  {isLoadingResumes && <option value="">Loading resumes...</option>}
-                  {!isLoadingResumes && resumes.length === 0 && <option value="">No resumes found</option>}
-                  {resumes.map(r => (
-                    <option key={r.id} value={r.id.toString()}>{r.title}</option>
-                  ))}
-                </select>
+      {/* Save Modal */}
+      {isSaveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+           <div className="bg-white w-full max-w-md rounded-[2.5rem] p-10 shadow-2xl space-y-8 animate-in zoom-in-95 duration-300">
+              <div className="space-y-2 text-center">
+                 <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <Save className="w-8 h-8" />
+                 </div>
+                 <h2 className="text-2xl font-black text-slate-900">Name Your Masterpiece</h2>
+                 <p className="text-slate-500 text-sm font-medium">Give your tailored resume a title for your collection.</p>
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                  <Search className="w-4 h-4" /> Job Description
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Resume Title</label>
+                <input 
+                  type="text"
+                  value={saveTitle}
+                  onChange={(e) => setSaveTitle(e.target.value)}
+                  className="w-full h-14 rounded-2xl border border-slate-100 bg-slate-50/50 px-6 font-bold text-slate-700 focus:border-indigo-500 focus:ring-0 outline-none transition-all"
+                  placeholder="e.g. Senior Dev - Google Tailored"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                 <button 
+                   onClick={() => setIsSaveModalOpen(false)}
+                   className="flex-1 h-14 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 transition-all"
+                 >
+                   Cancel
+                 </button>
+                 <button 
+                   onClick={executeSave}
+                   className="flex-1 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-black shadow-lg shadow-indigo-100 transition-all"
+                 >
+                   Save Resume
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {!result ? (
+        /* Setup View - Compact & Focused */
+        <div className="max-w-2xl mx-auto py-8">
+           <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-50 space-y-6">
+              <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
+                    <FileText className="w-3 h-3" /> Source Resume
+                  </label>
+                  <select 
+                    value={selectedResumeId}
+                    onChange={(e) => setSelectedResumeId(e.target.value)}
+                    disabled={isLoadingResumes || isTailoring}
+                    className="w-full h-12 rounded-xl border border-slate-100 bg-slate-50/50 px-4 font-bold text-slate-700 focus:border-indigo-500 focus:ring-0 outline-none transition-all appearance-none text-sm"
+                  >
+                    {isLoadingResumes && <option>Loading...</option>}
+                    {resumes.map(r => <option key={r.id} value={r.id.toString()}>{r.title}</option>)}
+                  </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
+                  <Target className="w-3 h-3" /> Target Job Description
                 </label>
                 <textarea
-                  rows={12}
+                  rows={10}
                   value={jobDescription}
                   onChange={(e) => setJobDescription(e.target.value)}
                   disabled={isTailoring}
-                  className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-5 py-4 text-sm text-[var(--foreground)] focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none leading-relaxed"
-                  placeholder="Paste the target JD here. My squad will extract requirements and optimize your bullets..."
+                  className="w-full rounded-2xl border border-slate-100 bg-slate-50/30 px-6 py-5 font-medium text-slate-600 focus:border-indigo-500 focus:ring-0 outline-none transition-all resize-none leading-relaxed text-sm shadow-inner"
+                  placeholder="Paste the job description here..."
                 />
               </div>
 
               <button 
                 onClick={handleTailor}
-                disabled={isTailoring || resumes.length === 0 || !jobDescription.trim()}
-                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-xl shadow-indigo-100 flex items-center justify-center gap-3 transition-all active:scale-95 disabled:opacity-50"
+                disabled={isTailoring || !jobDescription.trim()}
+                className="w-full h-14 bg-indigo-600 hover:bg-slate-900 text-white font-black rounded-xl shadow-lg shadow-indigo-100 flex items-center justify-center gap-3 transition-all active:scale-[0.98] disabled:opacity-50 group"
               >
                 {isTailoring ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                {isTailoring ? "Squad Working..." : "Start Tailoring"}
+                {isTailoring ? "Tailoring..." : "Tailor Resume"}
               </button>
-            </div>
-
-            {/* Agent Status (Only visible during tailoring) */}
-            {isTailoring && (
-              <div className="surface-panel p-6 rounded-2xl border-2 border-indigo-500/20 bg-indigo-50/30 flex items-center gap-4 animate-pulse">
-                <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-indigo-900">{tailorProgress}</p>
-                  <p className="text-xs text-indigo-600">Cyclic feedback loop active...</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="lg:col-span-3">
-             <div className="bg-slate-50 rounded-[2.5rem] p-12 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center space-y-4 min-h-[500px]">
-                <div className="w-20 h-20 rounded-3xl bg-white shadow-lg flex items-center justify-center text-indigo-500">
-                  <Target className="w-10 h-10" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900">Ready for Transformation</h3>
-                <p className="text-slate-500 max-w-sm">
-                  Select a resume and paste a job description to initiate the 5-agent tailoring squad. You'll see a side-by-side comparison of the results.
-                </p>
-             </div>
-          </div>
+           </div>
         </div>
       ) : (
-        /* Result Comparison View */
-        <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-700">
-          {/* Comparison Header */}
-          <div className="grid grid-cols-2 gap-8 sticky top-0 z-20 bg-[var(--background)]/80 backdrop-blur-md py-4 border-b border-[var(--border)]">
-            <div className="flex items-center justify-between px-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500">
-                  <FileText className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest text-[10px]">Original Resume</p>
-                  <p className="text-lg font-black text-slate-900">{result.original_match_score || 0}% Match</p>
+        /* Side-by-Side Focused View */
+        <div className="space-y-12 animate-in slide-in-from-bottom-6 duration-1000">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Original Baseline</span>
+                  <span className="text-[10px] font-bold text-slate-400">{result.original_match_score}% Match</span>
+              </div>
+              <div className="bg-slate-50 rounded-[2rem] border border-slate-100 h-[750px] overflow-y-auto overflow-x-hidden custom-scrollbar opacity-60 flex justify-center">
+                <div className="pt-8">
+                  {originalResumeData && <ResumePreview data={originalResumeData} scale={0.6} />}
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-between px-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center text-indigo-600">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest text-[10px]">Tailored Result</p>
-                  <div className="flex items-center gap-3">
-                    <p className="text-lg font-black text-indigo-900">{result.match_score}% Match</p>
-                    <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center gap-1">
-                      <TrendingUp className="w-3 h-3" /> +{(result.match_score - (result.original_match_score || 0))}%
-                    </span>
-                  </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-2">
+                  <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Tailored optimization</span>
+                  <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{result.match_score}% Match</span>
+              </div>
+              <div className="h-[750px] overflow-y-auto overflow-x-hidden custom-scrollbar flex justify-center">
+                <div className="pt-8">
+                  <ResumePreview data={result.tailored_data} scale={0.6} />
                 </div>
               </div>
-              <button 
-                onClick={handleSaveTailored}
-                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition-all"
-              >
-                Save
-              </button>
             </div>
           </div>
 
-          {/* Side by Side Previews */}
-          <div className="grid grid-cols-2 gap-12 pt-4">
-             <div className="space-y-4">
-                <div className="overflow-hidden rounded-[2rem] border border-slate-200 shadow-sm bg-slate-50 p-8 h-[900px] overflow-y-auto custom-scrollbar">
-                   {originalResumeData && (
-                     <ResumePreview data={originalResumeData} scale={0.75} />
-                   )}
-                </div>
-             </div>
-             
-             <div className="space-y-4">
-                <div className="overflow-hidden rounded-[2rem] border-2 border-indigo-500 shadow-2xl shadow-indigo-100 bg-white p-8 h-[900px] overflow-y-auto custom-scrollbar relative">
-                   <div className="absolute top-4 right-4 z-10 px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg">
-                      Tailored by Squad
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+             <div className="bg-white p-6 rounded-[2rem] border border-slate-50 shadow-lg space-y-6">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Optimization Delta</h4>
+                <div className="flex items-center justify-around">
+                   <div className="text-center">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Baseline</div>
+                      <div className={`text-3xl font-black mt-1 ${result.original_match_score > 70 ? "text-emerald-500" : result.original_match_score > 40 ? "text-amber-500" : "text-slate-400"}`}>
+                        {result.original_match_score}%
+                      </div>
                    </div>
-                   <ResumePreview data={result.tailored_data} scale={0.75} />
+                   <div className="flex flex-col items-center gap-1">
+                      <ArrowRight className="text-slate-200 w-5 h-5" />
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
+                        (result.comparison?.score_improvement || 0) > 0 ? "bg-emerald-50 text-emerald-600" : "bg-slate-50 text-slate-400"
+                      }`}>
+                        +{(result.comparison?.score_improvement || 0)}%
+                      </span>
+                   </div>
+                   <div className="text-center">
+                      <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter">Tailored</div>
+                      <div className={`text-3xl font-black mt-1 ${result.match_score > 70 ? "text-emerald-500" : result.match_score > 40 ? "text-amber-500" : "text-indigo-600"}`}>
+                        {result.match_score}%
+                      </div>
+                   </div>
+                </div>
+                <div className="pt-4 border-t border-slate-50">
+                   <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                         <div className={`w-2 h-2 rounded-full ${result.match_score > 70 ? "bg-emerald-500" : result.match_score > 40 ? "bg-amber-500" : "bg-red-500"}`} />
+                         <span className="text-[10px] font-bold text-slate-500 uppercase">System Status</span>
+                      </div>
+                      <span className="text-[10px] font-black text-slate-800 uppercase tracking-wider">
+                         {result.stop_reason?.replace('_', ' ') || "Optimized"}
+                      </span>
+                   </div>
                 </div>
              </div>
-          </div>
 
-          {/* Skill Gap Summary (Cleaned up) */}
-          <div className="surface-panel p-10 rounded-[3rem] border border-slate-100 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-12">
-             <div className="space-y-4">
-                <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-emerald-500" /> Matched Focus
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                   {result.matched_skills.map((skill, i) => (
-                     <span key={i} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold border border-emerald-100 shadow-sm">
-                       {skill}
-                     </span>
-                   ))}
-                </div>
-             </div>
-             <div className="space-y-4">
-                <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-amber-500" /> Improvement Areas
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                   {result.missing_skills.map((skill, i) => (
-                     <span key={i} className="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-xl text-xs font-bold border border-amber-100 shadow-sm">
-                       {skill}
-                     </span>
+             <div className="lg:col-span-2 bg-white p-6 rounded-[2rem] border border-slate-50 shadow-lg">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 px-2">JD Alignment breakthroughs</h4>
+                <div className="grid grid-cols-2 gap-x-12 gap-y-6 px-2">
+                   {result.section_scores && Object.entries(result.section_scores).map(([name, score]) => (
+                     <div key={name} className="space-y-2">
+                        <div className="flex items-center justify-between text-[10px] uppercase font-bold tracking-tight">
+                           <span className="text-slate-400">{name}</span>
+                           <span className={score > 70 ? "text-emerald-500" : score > 40 ? "text-amber-500" : "text-slate-400"}>
+                             {score}%
+                           </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
+                           <div className={`h-full rounded-full transition-all duration-1000 ${
+                             score > 70 ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]" : score > 40 ? "bg-amber-500" : "bg-slate-200"
+                           }`} style={{ width: `${score}%` }} />
+                        </div>
+                     </div>
                    ))}
                 </div>
              </div>
@@ -358,12 +408,8 @@ export default function TailorPage() {
 
       <style jsx global>{`
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #e2e8f0;
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f8fafc; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
       `}</style>
     </div>
   );

@@ -22,6 +22,8 @@ import {
   Star
 } from "lucide-react";
 import api from "@/services/api";
+import { useToast } from "@/components/ui/toast-provider";
+import { getApiErrorMessage } from "@/lib/api-error";
 
 interface SkillItem {
     id: number;
@@ -74,6 +76,7 @@ interface AnalysisHistoryItem {
 }
 
 export default function RoadmapPage() {
+  const toast = useToast();
   const [skillGap, setSkillGap] = useState<SkillGapData | null>(null);
   const [roadmap, setRoadmap] = useState<RoadmapData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,6 +103,7 @@ export default function RoadmapPage() {
         setHistory(res.data);
       } catch (err) {
         console.error("Failed to load analysis history", err);
+        toast.error("History unavailable", getApiErrorMessage(err, "Could not load analysis history."));
       } finally {
         setHistoryLoading(false);
       }
@@ -120,7 +124,9 @@ export default function RoadmapPage() {
       setActiveIds({ resumeId, jobId });
     } catch (err: any) {
       console.error("Fetch error:", err);
-      setError("Could not load analysis. Please try again or re-analyze.");
+      const message = getApiErrorMessage(err, "Could not load analysis. Please try again or re-analyze.");
+      setError(message);
+      toast.error("Failed to load analysis", message);
     } finally {
       setLoading(false);
     }
@@ -128,7 +134,7 @@ export default function RoadmapPage() {
 
   const handleAnalyze = async () => {
     if (!jdInput) {
-      alert("Please enter a job description.");
+      toast.warning("Job description required", "Please enter a job description.");
       return;
     }
     setAnalyzing(true);
@@ -147,7 +153,9 @@ export default function RoadmapPage() {
       setHistory(histRes.data);
     } catch (err: any) {
       console.error("Analysis error:", err);
-      setError("Analysis failed. Please try again.");
+      const message = getApiErrorMessage(err, "Analysis failed. Please try again.");
+      setError(message);
+      toast.error("Analysis failed", message);
     } finally {
       setAnalyzing(false);
     }

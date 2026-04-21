@@ -5,8 +5,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
+from dotenv import load_dotenv
 from database import engine, Base, get_db
 import models, schemas, crud, auth
+
+load_dotenv()
 
 # Create Tables
 Base.metadata.create_all(bind=engine)
@@ -213,6 +216,8 @@ async def tailor_resume(request: schemas.TailorRequest):
     try:
         result = await tailor_resume_to_jd(request.resume_data, request.job_description)
         return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

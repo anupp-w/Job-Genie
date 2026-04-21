@@ -20,7 +20,7 @@ export const Navbar = () => {
             <div className="rounded-full px-6 py-3 flex items-center justify-between shadow-soft backdrop-blur-xl border border-black/10 bg-white/70">
 
                 {/* Logo */}
-                <Link href="/" className="flex items-center">
+                <Link href="/" className="flex items-center gap-3">
                     <Image src="/JG00000.png" alt="JobGenie Logo" width={32} height={32} className="object-contain" priority />
                 </Link>
 

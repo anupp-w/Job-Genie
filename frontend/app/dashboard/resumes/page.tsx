@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import api from "@/services/api";
 import { generateResumeDocx } from "@/lib/pdf-generator";
+import { useToast } from "@/components/ui/toast-provider";
+import { getApiErrorMessage } from "@/lib/api-error";
 
 type ResumeResponse = {
    id: number;
@@ -69,9 +71,41 @@ function ensureUrl(url: string, type?: "linkedin" | "github"): string {
    return `https://${trimmed}`;
 }
 
+function normalizeMultiline(value: unknown): string {
+   if (typeof value === "string") return value;
+   if (Array.isArray(value)) {
+      return value
+         .map((item) => normalizeMultiline(item))
+         .filter((line) => line.trim())
+         .join("\n");
+   }
+   if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if ("description" in record) {
+         return normalizeMultiline(record.description);
+      }
+      if ("text" in record) {
+         return normalizeMultiline(record.text);
+      }
+      return Object.values(record)
+         .map((item) => (typeof item === "string" ? item : ""))
+         .filter((line) => line.trim())
+         .join("\n");
+   }
+   return "";
+}
+
+function bulletLines(value: unknown): string[] {
+   return normalizeMultiline(value)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => line.replace(/^[•\-\*]\s*/, ""));
+}
+
 // --- Helper: Normalize any parsed/loaded resume data to match ResumeData shape ---
 function normalizeResumeData(data: any): any {
-   const defaultData = {
+   const defaultData: any = {
       title: "Untitled Resume",
       personal: { firstName: "", lastName: "", phone: "", email: "", linkedin: "", github: "", website: "" },
       summary: "",
@@ -138,8 +172,108 @@ function normalizeResumeData(data: any): any {
    };
 }
 
+function buildMetricInsights(category: string, rawExplanation?: string): string[] {
+   const explanation = (rawExplanation || "").trim();
+
+   if (category === "ATS Compliance") {
+      const meaning = "This metric checks if ATS systems can parse your resume reliably: sections, contact info, date consistency, and formatting noise.";
+
+      if (!explanation) return [meaning];
+
+      if (/all ats checks passed/i.test(explanation)) {
+         return [
+            meaning,
+            "Interpretation: Your resume passed core ATS parseability checks with no major blockers detected."
+         ];
+      }
+
+      if (/could not evaluate/i.test(explanation)) {
+         return [
+            meaning,
+            "Interpretation: The analyzer could not extract enough resume text to run ATS checks."
+         ];
+      }
+
+      const issues = explanation
+         .replace(/\.$/, "")
+         .split(",")
+         .map((s) => s.trim())
+         .filter(Boolean);
+
+      if (issues.length > 0) {
+         return [
+            meaning,
+            `Interpretation: Your ATS score is reduced by these detected issues: ${issues.join("; ")}.`
+         ];
+      }
+
+      return [meaning, `Interpretation: ${explanation}`];
+   }
+
+   if (category === "Writing Quality") {
+      const meaning = "This metric measures bullet strength and readability using action verbs, passive voice detection, and filler phrase detection.";
+
+      const match = explanation.match(
+         /(\d+)\s+of\s+(\d+)\s+bullets use strong action verbs\.\s*(\d+)\s+passive constructions and\s+(\d+)\s+filler phrases detected\.?/i
+      );
+
+      if (match) {
+         const actionBullets = Number(match[1]);
+         const totalBullets = Number(match[2]);
+         const passiveCount = Number(match[3]);
+         const fillerCount = Number(match[4]);
+         const actionPct = totalBullets > 0 ? Math.round((actionBullets / totalBullets) * 100) : 0;
+
+         return [
+            meaning,
+            `Interpretation: ${actionBullets}/${totalBullets} bullets start with strong action verbs (${actionPct}%). Passive constructions: ${passiveCount}. Filler phrases: ${fillerCount}.`
+         ];
+      }
+
+      if (/could not evaluate/i.test(explanation) || /no standard bullet points/i.test(explanation)) {
+         return [
+            meaning,
+            "Interpretation: There were not enough detectable bullet points to evaluate writing quality signals."
+         ];
+      }
+
+      return explanation ? [meaning, `Interpretation: ${explanation}`] : [meaning];
+   }
+
+   if (category === "Impact & Metrics") {
+      const meaning = "This metric checks how often your bullets include quantified outcomes (percentages, counts, revenue, time saved, etc.).";
+
+      const match = explanation.match(
+         /(\d+)\s+of\s+(\d+)\s+bullets contain a quantified result\.\s*target is\s*60%\+\s*for a strong score\.?/i
+      );
+
+      if (match) {
+         const quantified = Number(match[1]);
+         const total = Number(match[2]);
+         const pct = total > 0 ? Math.round((quantified / total) * 100) : 0;
+
+         return [
+            meaning,
+            `Interpretation: ${quantified}/${total} bullets are quantified (${pct}%). A strong benchmark is 60%+ quantified bullets.`
+         ];
+      }
+
+      if (/could not evaluate/i.test(explanation) || /no standard bullet points/i.test(explanation)) {
+         return [
+            meaning,
+            "Interpretation: No measurable-impact bullets were detected, so impact density could not be scored reliably."
+         ];
+      }
+
+      return explanation ? [meaning, `Interpretation: ${explanation}`] : [meaning];
+   }
+
+   return explanation ? [explanation] : [];
+}
+
 export default function ResumesPage() {
    const router = useRouter();
+   const toast = useToast();
    const [resumes, setResumes] = useState<ResumeResponse[]>([]);
    const [loading, setLoading] = useState(false);
    const [saving, setSaving] = useState(false);
@@ -166,6 +300,8 @@ export default function ResumesPage() {
    const [isParsing, setIsParsing] = useState(false);
    const [isAnalyzing, setIsAnalyzing] = useState(false);
    const [showNavConfirm, setShowNavConfirm] = useState(false);
+   const [deleteResumeId, setDeleteResumeId] = useState<number | null>(null);
+   const [isDeletingResume, setIsDeletingResume] = useState(false);
 
    // Preview Scaling
    const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -304,12 +440,13 @@ export default function ResumesPage() {
             setResumes(filtered);
          } catch (err: any) {
             console.error("Resumes fetch error:", err);
+            toast.error("Could not load resumes", getApiErrorMessage(err, "Please refresh and try again."));
          } finally {
             setLoading(false);
          }
       };
       fetchResumes();
-   }, []);
+   }, [toast]);
 
    const handleUpload = async (file: File) => {
       const formData = new FormData();
@@ -329,11 +466,11 @@ export default function ResumesPage() {
                ...normalized,
                title: prev.title || normalized.title,
             }));
-            alert("Resume parsed successfully! Please review the auto-filled data.");
+            toast.success("Resume parsed", "We auto-filled your resume data. Please review it before saving.");
          }
       } catch (error: any) {
          console.error("Upload error:", error);
-         alert(error?.response?.data?.detail || "Failed to parse resume. Please try again.");
+         toast.error("Parse failed", getApiErrorMessage(error, "Failed to parse resume. Please try again."));
       } finally {
          setSaving(false);
       }
@@ -342,6 +479,7 @@ export default function ResumesPage() {
    const handleSave = async () => {
       if (!hasToken) {
          setError("Please sign in to save.");
+         toast.warning("Sign in required", "Please sign in to save your resume.");
          return;
       }
       setSaving(true);
@@ -362,9 +500,10 @@ export default function ResumesPage() {
             setCurrentResumeId(res.data.id);
          }
          setResumes(prev => [res.data, ...prev.filter(r => r.id !== res.data.id)]);
-         alert("Resume saved successfully!");
+         toast.success("Resume saved", "Your resume was saved successfully.");
       } catch (err: any) {
          setError("Failed to save resume.");
+         toast.error("Save failed", getApiErrorMessage(err, "Failed to save resume."));
       } finally {
          setSaving(false);
       }
@@ -398,23 +537,34 @@ export default function ResumesPage() {
 
             setViewMode("builder");
          } else {
-            alert("This resume has no editable data.");
+            toast.info("No editable data", "This resume does not contain structured editable content.");
          }
       } catch (err) {
          console.error("Failed to load resume data:", err);
-         alert("Could not load the resume data.");
+         toast.error("Load failed", "Could not load the resume data.");
       }
    };
 
    const handleDelete = async (e: React.MouseEvent, id: number) => {
       e.stopPropagation();
-      if (!confirm("Are you sure you want to delete this resume?")) return;
+
+      setDeleteResumeId(id);
+   };
+
+   const confirmDeleteResume = async () => {
+      if (!deleteResumeId) return;
+
       try {
-         await api.delete(`/resumes/${id}`);
-         setResumes(prev => prev.filter(r => r.id !== id));
-      } catch (err) {
+         setIsDeletingResume(true);
+         await api.delete(`/resumes/${deleteResumeId}`);
+         setResumes(prev => prev.filter(r => r.id !== deleteResumeId));
+         toast.success("Resume deleted", "The resume was removed.");
+         setDeleteResumeId(null);
+      } catch (err: any) {
          console.error("Failed to delete resume:", err);
-         alert("Failed to delete the resume.");
+         toast.error("Delete failed", getApiErrorMessage(err, "Failed to delete the resume."));
+      } finally {
+         setIsDeletingResume(false);
       }
    };
 
@@ -438,7 +588,9 @@ export default function ResumesPage() {
          setShowTailorReport(true);
       } catch (err: any) {
          console.error("Tailoring error:", err);
-         setError("AI Tailoring failed. Please check your API key and try again.");
+         const message = getApiErrorMessage(err, "AI Tailoring failed. Please check your API key and try again.");
+         setError(message);
+         toast.error("Tailoring failed", message);
       } finally {
          setIsTailoring(false);
       }
@@ -449,9 +601,9 @@ export default function ResumesPage() {
          await generateResumeDocx(resumeData, enabledSections);
       } catch (err) {
          console.error("Document generation failed:", err);
-         alert("Download failed. Please try again.");
+         toast.error("Download failed", "Please try again.");
       }
-   }, [resumeData, enabledSections]);
+   }, [resumeData, enabledSections, toast]);
 
    const handleRunAnalysis = async () => {
       setIsAnalyzing(true);
@@ -475,9 +627,27 @@ export default function ResumesPage() {
                foundKeywords: data.scores.job_match.found_keywords || [],
             } : null,
             breakdown: [
-               { category: "ATS Compliance", iconType: "ats", score: data.scores.ats.score, maxScore: 100, tips: [data.scores.ats.explanation] },
-               { category: "Writing Quality", iconType: "writing", score: data.scores.writing.score, maxScore: 100, tips: [data.scores.writing.explanation] },
-               { category: "Impact & Metrics", iconType: "impact", score: data.scores.impact.score, maxScore: 100, tips: [data.scores.impact.explanation] }
+               {
+                  category: "ATS Compliance",
+                  iconType: "ats",
+                  score: data.scores.ats.score,
+                  maxScore: 100,
+                  tips: buildMetricInsights("ATS Compliance", data.scores.ats.explanation)
+               },
+               {
+                  category: "Writing Quality",
+                  iconType: "writing",
+                  score: data.scores.writing.score,
+                  maxScore: 100,
+                  tips: buildMetricInsights("Writing Quality", data.scores.writing.explanation)
+               },
+               {
+                  category: "Impact & Metrics",
+                  iconType: "impact",
+                  score: data.scores.impact.score,
+                  maxScore: 100,
+                  tips: buildMetricInsights("Impact & Metrics", data.scores.impact.explanation)
+               }
             ]
          };
          
@@ -485,7 +655,7 @@ export default function ResumesPage() {
          setShowAnalysisPanel(true);
       } catch(err) {
          console.error("Analysis failed:", err);
-         alert("Analysis failed. Ensure the backend is running and try again.");
+         toast.error("Analysis failed", getApiErrorMessage(err, "Ensure the backend is running and try again."));
       } finally {
          setIsAnalyzing(false);
       }
@@ -549,7 +719,7 @@ export default function ResumesPage() {
    };
 
    const addCertification = () => {
-      const newItem = { name: "", issuer: "", dateObtained: "", expirationDate: "", credentialId: "" };
+      const newItem = { name: "", issuer: "", dateObtained: "", expirationDate: "", credentialId: "", url: "" };
       setResumeData(prev => ({ ...prev, certifications: [...prev.certifications, newItem] }));
    };
 
@@ -1038,13 +1208,17 @@ export default function ResumesPage() {
                                                 <span>{exp.company}</span>
                                                 <span>{exp.location}</span>
                                              </div>
-                                             {exp.description && (
-                                                <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                                                   {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                                                      <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                                                   ))}
-                                                </ul>
-                                             )}
+                                             {(() => {
+                                                const lines = bulletLines(exp.description);
+                                                if (!lines.length) return null;
+                                                return (
+                                                   <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                                      {lines.map((line, j) => (
+                                                         <li key={j}>{line}</li>
+                                                      ))}
+                                                   </ul>
+                                                );
+                                             })()}
                                           </div>
                                        )) : (
                                           <div className="text-[11px] text-slate-400 italic">No work experience provided yet...</div>
@@ -1065,13 +1239,17 @@ export default function ResumesPage() {
                                                 <span>{proj.startDate}{proj.startDate || proj.endDate || proj.current ? " — " : ""}{proj.current ? "Present" : proj.endDate}</span>
                                              </div>
                                              {proj.tech && <div className="italic text-[10.5px] mb-1">{proj.tech}</div>}
-                                             {proj.description && (
-                                                <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                                                   {proj.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                                                      <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                                                   ))}
-                                                </ul>
-                                             )}
+                                             {(() => {
+                                                const lines = bulletLines(proj.description);
+                                                if (!lines.length) return null;
+                                                return (
+                                                   <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                                      {lines.map((line, j) => (
+                                                         <li key={j}>{line}</li>
+                                                      ))}
+                                                   </ul>
+                                                );
+                                             })()}
                                           </div>
                                        )) : (
                                           <div className="text-[11px] text-slate-400 italic">No projects provided yet...</div>
@@ -1111,13 +1289,17 @@ export default function ResumesPage() {
                                              <div className="flex justify-between items-baseline italic mb-1">
                                                 <span>{exp.company}</span>
                                              </div>
-                                             {exp.description && (
-                                                <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                                                   {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                                                      <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                                                   ))}
-                                                </ul>
-                                             )}
+                                             {(() => {
+                                                const lines = bulletLines(exp.description);
+                                                if (!lines.length) return null;
+                                                return (
+                                                   <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                                      {lines.map((line, j) => (
+                                                         <li key={j}>{line}</li>
+                                                      ))}
+                                                   </ul>
+                                                );
+                                             })()}
                                           </div>
                                        ))}
                                     </div>
@@ -1136,13 +1318,17 @@ export default function ResumesPage() {
                                                 <span>{res.startDate}{res.startDate || res.endDate || res.current ? " — " : ""}{res.current ? "Present" : res.endDate}</span>
                                              </div>
                                              {res.tech && <div className="italic text-[10.5px] mb-1">{res.tech}</div>}
-                                             {res.description && (
-                                                <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                                                   {res.description.split('\n').filter((l: string) => l.trim()).map((line: string, j: number) => (
-                                                      <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                                                   ))}
-                                                </ul>
-                                             )}
+                                             {(() => {
+                                                const lines = bulletLines(res.description);
+                                                if (!lines.length) return null;
+                                                return (
+                                                   <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                                                      {lines.map((line, j) => (
+                                                         <li key={j}>{line}</li>
+                                                      ))}
+                                                   </ul>
+                                                );
+                                             })()}
                                           </div>
                                        ))}
                                     </div>
@@ -2031,8 +2217,12 @@ export default function ResumesPage() {
                                        <div className={`h-full rounded-full ${barColor} transition-all duration-700`} style={{ width: `${(cat.score / cat.maxScore) * 100}%` }} />
                                     </div>
 
-                                    {cat.tips.length > 0 && cat.tips[0] && (
-                                       <p className="text-[11px] text-slate-500 leading-relaxed pl-1 border-l-2 border-slate-200">{cat.tips[0]}</p>
+                                    {cat.tips.length > 0 && (
+                                       <div className="space-y-1.5">
+                                          {cat.tips.slice(0, 2).map((tip: string, idx: number) => (
+                                             <p key={idx} className="text-[11px] text-slate-500 leading-relaxed pl-1 border-l-2 border-slate-200">{tip}</p>
+                                          ))}
+                                       </div>
                                     )}
                                  </div>
                               );
@@ -2090,6 +2280,41 @@ export default function ResumesPage() {
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
       `}</style>
+
+         {/* Delete Confirmation Modal */}
+         {deleteResumeId && (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm" onClick={() => setDeleteResumeId(null)}>
+               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+                  <div className="p-6 space-y-3">
+                     <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center">
+                           <Trash2 className="w-5 h-5 text-rose-600" />
+                        </div>
+                        <div>
+                           <h3 className="font-bold text-slate-900">Delete this resume?</h3>
+                           <p className="text-xs text-slate-500">This action cannot be undone.</p>
+                        </div>
+                     </div>
+                  </div>
+                  <div className="flex border-t border-slate-100">
+                     <button
+                        onClick={() => setDeleteResumeId(null)}
+                        className="flex-1 px-4 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50 transition-colors"
+                        disabled={isDeletingResume}
+                     >
+                        Cancel
+                     </button>
+                     <button
+                        onClick={confirmDeleteResume}
+                        className="flex-1 px-4 py-3 text-sm font-bold text-rose-600 hover:bg-rose-50 transition-colors border-l border-slate-100 disabled:opacity-50"
+                        disabled={isDeletingResume}
+                     >
+                        {isDeletingResume ? "Deleting..." : "Delete"}
+                     </button>
+                  </div>
+               </div>
+            </div>
+         )}
 
          {/* Navigation Confirmation Modal */}
          {showNavConfirm && (

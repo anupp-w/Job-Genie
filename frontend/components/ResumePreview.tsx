@@ -97,6 +97,38 @@ function ensureUrl(url: string, type?: "linkedin" | "github"): string {
   return `https://${trimmed}`;
 }
 
+function normalizeMultiline(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeMultiline(item))
+      .filter((line) => line.trim())
+      .join("\n");
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if ("description" in record) {
+      return normalizeMultiline(record.description);
+    }
+    if ("text" in record) {
+      return normalizeMultiline(record.text);
+    }
+    return Object.values(record)
+      .map((item) => (typeof item === "string" ? item : ""))
+      .filter((line) => line.trim())
+      .join("\n");
+  }
+  return "";
+}
+
+function bulletLines(value: unknown): string[] {
+  return normalizeMultiline(value)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/^[•\-\*]\s*/, ""));
+}
+
 const ResumePreview: React.FC<ResumePreviewProps> = ({ 
   data, 
   enabledSections = ["personal", "summary", "experience", "projects", "education", "skills"],
@@ -186,13 +218,17 @@ const ResumePreview: React.FC<ResumePreviewProps> = ({
                           <span>{exp.company}</span>
                           <span>{exp.location}</span>
                         </div>
-                        {exp.description && (
-                          <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                            {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                              <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                            ))}
-                          </ul>
-                        )}
+                        {(() => {
+                          const lines = bulletLines(exp.description);
+                          if (!lines.length) return null;
+                          return (
+                            <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                              {lines.map((line, j) => (
+                                <li key={j}>{line}</li>
+                              ))}
+                            </ul>
+                          );
+                        })()}
                       </div>
                     )) : (
                       <div className="text-[11px] text-gray-400 italic">No work experience provided yet...</div>
@@ -241,13 +277,17 @@ const ResumePreview: React.FC<ResumePreviewProps> = ({
                           <span>{proj.startDate}{proj.startDate || proj.endDate || proj.current ? " — " : ""}{proj.current ? "Present" : proj.endDate}</span>
                         </div>
                         {proj.tech && <div className="italic text-[10.5px] mb-1">{proj.tech}</div>}
-                        {proj.description && (
-                          <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                            {proj.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                              <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                            ))}
-                          </ul>
-                        )}
+                        {(() => {
+                          const lines = bulletLines(proj.description);
+                          if (!lines.length) return null;
+                          return (
+                            <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                              {lines.map((line, j) => (
+                                <li key={j}>{line}</li>
+                              ))}
+                            </ul>
+                          );
+                        })()}
                       </div>
                     )) : (
                       <div className="text-[11px] text-gray-400 italic">No projects provided yet...</div>
@@ -287,13 +327,17 @@ const ResumePreview: React.FC<ResumePreviewProps> = ({
                         <div className="flex justify-between items-baseline italic mb-1">
                           <span>{exp.company}</span>
                         </div>
-                        {exp.description && (
-                          <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                            {exp.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                              <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                            ))}
-                          </ul>
-                        )}
+                        {(() => {
+                          const lines = bulletLines(exp.description);
+                          if (!lines.length) return null;
+                          return (
+                            <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                              {lines.map((line, j) => (
+                                <li key={j}>{line}</li>
+                              ))}
+                            </ul>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -312,13 +356,17 @@ const ResumePreview: React.FC<ResumePreviewProps> = ({
                           <span>{res.startDate}{res.startDate || res.endDate || res.current ? " — " : ""}{res.current ? "Present" : res.endDate}</span>
                         </div>
                         {res.tech && <div className="italic text-[10.5px] mb-1">{res.tech}</div>}
-                        {res.description && (
-                          <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
-                            {res.description.split('\n').filter(l => l.trim()).map((line, j) => (
-                              <li key={j}>{line.replace(/^[•\-\*]\s*/, '')}</li>
-                            ))}
-                          </ul>
-                        )}
+                        {(() => {
+                          const lines = bulletLines(res.description);
+                          if (!lines.length) return null;
+                          return (
+                            <ul className="list-disc ml-4 space-y-0.5 text-[10.5px]">
+                              {lines.map((line, j) => (
+                                <li key={j}>{line}</li>
+                              ))}
+                            </ul>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>

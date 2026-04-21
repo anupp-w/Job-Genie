@@ -2,6 +2,7 @@
 
 import React, { useMemo, useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { 
   LayoutDashboard, 
@@ -69,8 +70,9 @@ export const Sidebar = () => {
   return (
     <aside className="w-64 h-screen border-r border-[var(--border)] bg-[var(--surface)] flex flex-col flex-shrink-0 sticky top-0">
       {/* Brand */}
-      <div className="px-5 py-4 border-b border-[var(--border)]">
-        <span className="text-lg font-bold tracking-tight text-[var(--foreground)]">Job <span className="text-[var(--accent-2)]">Genie</span></span>
+      <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-3">
+        <Image src="/JG00000.png" alt="JobGenie Logo" width={64} height={64} className="object-contain" priority />
+        <span className="text-xl font-bold tracking-tight text-slate-800">Job Genie</span>
       </div>
 
       {/* Profile Section */}
