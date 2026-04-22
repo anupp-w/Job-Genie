@@ -19,26 +19,7 @@ except ImportError:
         PYPDF_AVAILABLE = False
         logger.warning("pypdf/PyPDF2 not installed. PDF text extraction unavailable.")
 
-# --- CrewAI + LLM ---
-try:
-    from crewai import Agent, Task, Crew, Process
-    CREWAI_AVAILABLE = True
-except ImportError:
-    CREWAI_AVAILABLE = False
-    logger.warning("CrewAI not installed. Parsing will use basic text extraction fallback.")
-
-# --- Groq LLM for CrewAI ---
-try:
-    from langchain_groq import ChatGroq
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    # Fallback to OpenAI if Groq not available
-    try:
-        from langchain_openai import ChatOpenAI
-        LANGCHAIN_AVAILABLE = True
-    except ImportError:
-        LANGCHAIN_AVAILABLE = False
+logger.info("Using deterministic resume parsing; CrewAI-based parsing is disabled.")
 
 
 def _extract_text_from_pdf(file_path: str) -> str:
@@ -80,12 +61,46 @@ def _build_mock_resume(name: str, email: str, skills: list) -> dict:
     }
 
 
+def _extract_skills_from_text(text: str) -> list[str]:
+    """Extract a broad set of likely technical skills from resume text."""
+    if not text:
+        return []
+
+    skill_candidates = [
+        "Python", "Java", "JavaScript", "TypeScript", "React", "Next.js", "Node.js", "FastAPI", "Flask",
+        "Django", "SQL", "PostgreSQL", "MySQL", "MongoDB", "AWS", "Azure", "GCP", "Docker", "Kubernetes",
+        "Git", "CI/CD", "MLflow", "Kubeflow", "SageMaker", "Vertex AI", "Azure ML", "TensorFlow", "PyTorch",
+        "Scikit-learn", "Pandas", "NumPy", "NLP", "Computer Vision", "Machine Learning", "Deep Learning",
+        "LLM APIs", "OpenAI", "Groq", "LangChain", "LangGraph", "CrewAI", "LlamaIndex", "Embeddings",
+        "Vector Databases", "RESTful APIs", "Microservices", "MLOps", "Data Pipelines", "Feature Engineering",
+        "Regression", "Classification", "Clustering", "Linux", "Operating Systems", "Data Structures",
+        "Algorithms", "System Design", "HTML", "CSS", "Tailwind CSS", "Uvicorn", "PyPDF", "Hugging Face",
+        "Transformers"
+    ]
+
+    lowered = text.lower()
+    found = []
+    for candidate in skill_candidates:
+        pattern = candidate.lower().replace(".", r"\\.")
+        if pattern in lowered:
+            found.append(candidate)
+
+    # Keep ordering stable and remove duplicates.
+    deduped = []
+    seen = set()
+    for skill in found:
+        key = skill.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(skill)
+    return deduped
+
+
 async def parse_resume_upload(file: UploadFile) -> dict:
     """
-    Parse an uploaded PDF resume into structured JSON using:
-      1. pypdf for raw text extraction
-      2. CrewAI agents (Extractor + Formatter) for structured parsing
-      3. Fallback to basic mock if AI is unavailable
+        Parse an uploaded PDF resume into structured JSON using pypdf plus
+        deterministic heuristics. This intentionally avoids CrewAI so parsing is
+        predictable and does not depend on a hosted agent pipeline.
     """
     suffix = os.path.splitext(file.filename or "resume.pdf")[1].lower()
 
@@ -101,15 +116,7 @@ async def parse_resume_upload(file: UploadFile) -> dict:
             logger.warning("No text extracted from PDF — returning mock data.")
             return _build_mock_resume("Candidate Name", "candidate@example.com", ["Python", "React"])
 
-        # Step 2: Try CrewAI structured extraction
-        groq_key = os.getenv("GROQ_API_KEY")
-        if CREWAI_AVAILABLE and LANGCHAIN_AVAILABLE and groq_key:
-            try:
-                return await _parse_with_crewai(raw_text, groq_key)
-            except Exception as e:
-                logger.error(f"CrewAI parsing failed, falling back to mock: {e}")
-
-        # Step 3: Basic fallback — extract name/email/skills with simple heuristics
+        # Step 2: Deterministic fallback — extract name/email/skills with simple heuristics
         return _simple_heuristic_parse(raw_text, file.filename or "")
 
     finally:
@@ -118,96 +125,9 @@ async def parse_resume_upload(file: UploadFile) -> dict:
 
 
 async def _parse_with_crewai(raw_text: str, groq_key: str) -> dict:
-    """Use CrewAI two-agent pipeline to extract structured resume JSON via Groq."""
-    llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        api_key=groq_key,
-        temperature=0
-    )
-
-    extractor = Agent(
-        role="Resume Data Extractor",
-        goal="Extract every piece of information from the raw resume text into a precise JSON structure.",
-        backstory=(
-            "You are an expert resume analyst who reads raw resume text and accurately identifies "
-            "all sections: personal info, summary, work experience, education, projects, skills, "
-            "certifications, leadership, research, awards, and publications."
-        ),
-        verbose=False,
-        llm=llm,
-        allow_delegation=False,
-    )
-
-    formatter = Agent(
-        role="Resume JSON Formatter",
-        goal="Transform the extracted resume data into a clean, valid JSON matching the exact frontend schema.",
-        backstory=(
-            "You ensure JSON output is syntactically valid and exactly matches the required schema "
-            "with correct field names and data types."
-        ),
-        verbose=False,
-        llm=llm,
-        allow_delegation=False,
-    )
-
-    extract_task = Task(
-        description=(
-            f"Extract ALL data from this resume text:\n\n{raw_text}\n\n"
-            "Identify: full name, email, phone, LinkedIn URL, GitHub URL, website, summary, objective, "
-            "work experiences (role, company, location, start date, end date, current?, description), "
-            "education (school, degree, minor, GPA, location, start/end dates), "
-            "projects (name, technologies, description, GitHub/live URL, start/end dates), "
-            "skills (grouped into categories like Technical, Soft, Languages), "
-            "certifications (name, issuer, date obtained, expiration, credential ID, URL), "
-            "leadership roles, research, awards, publications."
-        ),
-        expected_output="A thorough textual extraction of all resume sections and fields.",
-        agent=extractor,
-    )
-
-    format_task = Task(
-        description=(
-            "Using the extracted resume data, produce a single valid JSON object matching EXACTLY this schema:\n"
-            "{\n"
-            '  "personal": { "firstName": "", "lastName": "", "phone": "", "email": "", "linkedin": "", "github": "", "website": "" },\n'
-            '  "summary": "",\n'
-            '  "objective": "",\n'
-            '  "experience": [{ "role": "", "company": "", "location": "", "startDate": "", "endDate": "", "current": false, "description": "" }],\n'
-            '  "projects": [{ "name": "", "tech": "", "description": "", "url": "", "startDate": "", "endDate": "", "current": false }],\n'
-            '  "education": [{ "school": "", "degree": "", "minor": "", "gpa": "", "location": "", "startDate": "", "endDate": "" }],\n'
-            '  "skills": [{ "category": "Technical Skills", "items": [] }],\n'
-            '  "certifications": [{ "name": "", "issuer": "", "dateObtained": "", "expirationDate": "", "credentialId": "", "url": "" }],\n'
-            '  "leadership": [{ "role": "", "company": "", "location": "", "startDate": "", "endDate": "", "current": false, "description": "" }],\n'
-            '  "research": [{ "name": "", "tech": "", "description": "", "url": "", "startDate": "", "endDate": "", "current": false }],\n'
-            '  "awards": [{ "title": "", "issuer": "", "date": "", "description": "" }],\n'
-            '  "publications": [{ "title": "", "publisher": "", "date": "", "url": "", "description": "" }]\n'
-            "}\n"
-            "Output ONLY the JSON with no markdown fences or extra text."
-        ),
-        expected_output="A single valid JSON object with all resume fields populated.",
-        agent=formatter,
-        context=[extract_task],
-    )
-
-    crew = Crew(
-        agents=[extractor, formatter],
-        tasks=[extract_task, format_task],
-        process=Process.sequential,
-        verbose=False,
-    )
-
-    result = crew.kickoff()
-    result_str = str(result.raw if hasattr(result, "raw") else result).strip()
-
-    # Strip markdown fences if present
-    if "```json" in result_str:
-        result_str = result_str.split("```json")[1].split("```")[0].strip()
-    elif "```" in result_str:
-        parts = result_str.split("```")
-        if len(parts) >= 3:
-            result_str = parts[1].strip()
-
-    return json.loads(result_str)
+    """Compatibility shim preserved for older callers; no CrewAI dependency remains."""
+    logger.info("CrewAI parsing shim invoked; using deterministic parser instead.")
+    return _simple_heuristic_parse(raw_text, "resume.pdf")
 
 
 def _simple_heuristic_parse(text: str, filename: str) -> dict:
@@ -223,9 +143,15 @@ def _simple_heuristic_parse(text: str, filename: str) -> dict:
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     name = lines[0] if lines else filename.split(".")[0].replace("_", " ")
 
-    # Detect skills by common keywords
-    skill_keywords = ["Python", "JavaScript", "TypeScript", "React", "Node", "SQL", "Java", "C++",
-                      "AWS", "Docker", "Git", "Machine Learning", "FastAPI", "Next.js", "MongoDB"]
-    found_skills = [s for s in skill_keywords if s.lower() in text.lower()]
+    # Detect skills by common keywords and technical phrases.
+    found_skills = _extract_skills_from_text(text)
+
+    # Add a few obvious extras from sections so PDF resumes are not empty when the text is noisy.
+    section_headers = ["experience", "projects", "skills", "education", "certifications"]
+    if not found_skills:
+        for header in section_headers:
+            if header in text.lower():
+                found_skills.append(header.title())
+                break
 
     return _build_mock_resume(name, email, found_skills)

@@ -405,6 +405,7 @@ def get_roadmap_endpoint(resume_id: int, job_id: int, db: Session = Depends(get_
 async def analyze_new_endpoint(
     db: Session = Depends(get_db),
     file: UploadFile = File(None),
+    resume_id: int | None = Form(None),
     job_description: str = Form("Software Engineer"),
     current_user: models.User = Depends(auth.get_current_user)
 ):
@@ -423,12 +424,53 @@ async def analyze_new_endpoint(
         
     logger.info(f"--- NEW ANALYSIS REQUEST ---")
     logger.info(f"File provided: {file is not None}")
+    logger.info(f"Resume ID provided: {resume_id}")
     logger.info(f"Job Description Length: {len(job_description)}")
+
+    if not resume_id and not file:
+        logger.error("analyze-new called without resume_id and without file")
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either resume_id (recommended) or a resume PDF file.",
+        )
     
     # 1. Parse Resume if provided — extract BOTH structured data and raw text
     resume_data = {}
     raw_resume_text = ""
-    if file:
+    source_resume = None
+    if resume_id:
+        source_resume = db.query(models.Resume).filter(
+            models.Resume.id == resume_id,
+            models.Resume.user_id == current_user.id,
+        ).first()
+
+        if not source_resume:
+            raise HTTPException(status_code=404, detail="Resume not found")
+
+        if source_resume.parsed_content:
+            try:
+                resume_data = json.loads(source_resume.parsed_content)
+            except Exception as e:
+                logger.error(f"Stored resume parsed_content failed to load: {e}")
+                resume_data = {}
+
+        if not resume_data:
+            structured_section = next(
+                (section for section in source_resume.sections if section.section_type == "structured_data"),
+                None,
+            )
+            if structured_section and structured_section.content:
+                try:
+                    resume_data = json.loads(structured_section.content)
+                except Exception as e:
+                    logger.error(f"Stored resume structured_data failed to load: {e}")
+                    resume_data = {}
+
+        if not resume_data:
+            raise HTTPException(status_code=400, detail="Selected resume does not contain structured data")
+
+        logger.info(f"Loaded existing resume data with keys: {list(resume_data.keys())}")
+    elif file:
         # Save the file to a temp location so we can extract raw text directly
         file_bytes = await file.read()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -454,9 +496,10 @@ async def analyze_new_endpoint(
             resume_data = {}
     
     # 2. Create Resume Record
+    analysis_title = source_resume.title if source_resume else (file.filename if file else 'Input')
     new_resume = models.Resume(
         user_id=current_user.id,
-        title=f"Analysis - {file.filename if file else 'Input'}",
+        title=f"Analysis - {analysis_title}",
         parsed_content=json.dumps(resume_data) if resume_data else json.dumps({"_raw_text": raw_resume_text[:2000]})
     )
     db.add(new_resume)
@@ -478,23 +521,46 @@ async def analyze_new_endpoint(
         logger.info("Using structured parse data for resume skill extraction")
     
     resume_skills_ai = []
-    if resume_text_for_ai:
-        resume_skills_ai = extract_skills_from_text(resume_text_for_ai)
-        logger.info(f"LLM extracted {len(resume_skills_ai)} resume skills: {resume_skills_ai}")
-
-    # Fallback to existing parsed skills if AI fails
-    if not resume_skills_ai and "skills" in resume_data:
+    if resume_data and "skills" in resume_data:
         if isinstance(resume_data["skills"], list):
             for cat in resume_data["skills"]:
                 if isinstance(cat, dict):
-                    resume_skills_ai.extend(cat.get("items", []))
+                    resume_skills_ai.extend(cat.get("items", []) or cat.get("skills", []))
                 elif isinstance(cat, str):
                     resume_skills_ai.append(cat)
         elif isinstance(resume_data["skills"], dict):
             for cat, items in resume_data["skills"].items():
-                if isinstance(items, list): resume_skills_ai.extend(items)
-                else: resume_skills_ai.append(str(items))
-        logger.info(f"Fallback extracted {len(resume_skills_ai)} resume skills")
+                if isinstance(items, list):
+                    resume_skills_ai.extend(items)
+                else:
+                    resume_skills_ai.append(str(items))
+
+    if resume_text_for_ai:
+        resume_skills_ai = extract_skills_from_text(resume_text_for_ai)
+        logger.info(f"LLM extracted {len(resume_skills_ai)} resume skills: {resume_skills_ai}")
+
+    # Merge in structured parse skills so uploaded PDF skills are never ignored.
+    if resume_data and "skills" in resume_data:
+        logger.info(f"Structured parse contributed {len(resume_skills_ai)} resume skills before dedupe")
+
+    if resume_text_for_ai:
+        structured_skills = []
+        if resume_data and "skills" in resume_data:
+            if isinstance(resume_data["skills"], list):
+                for cat in resume_data["skills"]:
+                    if isinstance(cat, dict):
+                        structured_skills.extend(cat.get("items", []) or cat.get("skills", []))
+                    elif isinstance(cat, str):
+                        structured_skills.append(cat)
+            elif isinstance(resume_data["skills"], dict):
+                for cat, items in resume_data["skills"].items():
+                    if isinstance(items, list):
+                        structured_skills.extend(items)
+                    else:
+                        structured_skills.append(str(items))
+        resume_skills_ai = list(dict.fromkeys([*structured_skills, *resume_skills_ai]))
+    elif not resume_skills_ai:
+        logger.info("No structured or extracted skills available from resume parsing")
 
     for skill_name in set(resume_skills_ai):
         if not skill_name or not isinstance(skill_name, str):
@@ -593,6 +659,10 @@ def get_analysis_history(
         job = db.query(models.Job).filter(models.Job.id == pair.job_id).first()
         
         if not resume or not job:
+            continue
+
+        # Skip legacy empty runs that were created without a resume source.
+        if resume.title == "Analysis - Input" and (not resume.parsed_content or resume.parsed_content.strip() == '{"_raw_text": ""}'):
             continue
         
         # Calculate match percentage

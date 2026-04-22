@@ -25,6 +25,16 @@ import api from "@/services/api";
 import { useToast } from "@/components/ui/toast-provider";
 import { getApiErrorMessage } from "@/lib/api-error";
 
+type ResumeResponse = {
+  id: number;
+  title: string;
+  ats_score: number;
+  file_path?: string | null;
+  parsed_content?: string | null;
+  sections: { id: number; section_type: string; content: string; order?: number | null }[];
+  updated?: string;
+};
+
 interface SkillItem {
     id: number;
     name: string;
@@ -77,6 +87,7 @@ interface AnalysisHistoryItem {
 
 export default function RoadmapPage() {
   const toast = useToast();
+  const [resumes, setResumes] = useState<ResumeResponse[]>([]);
   const [skillGap, setSkillGap] = useState<SkillGapData | null>(null);
   const [roadmap, setRoadmap] = useState<RoadmapData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -86,7 +97,8 @@ export default function RoadmapPage() {
   // Real-time analysis inputs
   const [showForm, setShowForm] = useState(false);
   const [jdInput, setJdInput] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [selectedResumeId, setSelectedResumeId] = useState<string>("");
+  const [loadingResumes, setLoadingResumes] = useState(true);
 
   // Active IDs
   const [activeIds, setActiveIds] = useState<{resumeId: number, jobId: number} | null>(null);
@@ -110,6 +122,31 @@ export default function RoadmapPage() {
     }
     fetchHistory();
   }, []);
+
+  useEffect(() => {
+    async function fetchResumes() {
+      try {
+        setLoadingResumes(true);
+        const res = await api.get<ResumeResponse[]>("/resumes");
+        const filtered = res.data
+          .filter((r) => !r.title?.startsWith("Analysis -"))
+          .sort((a, b) => {
+            const da = a.updated ? new Date(a.updated).getTime() : 0;
+            const db = b.updated ? new Date(b.updated).getTime() : 0;
+            return db - da;
+          });
+        setResumes(filtered);
+        setSelectedResumeId((current) => current || (filtered[0]?.id?.toString() ?? ""));
+      } catch (err) {
+        console.error("Failed to load resumes", err);
+        toast.error("Resumes unavailable", getApiErrorMessage(err, "Could not load your saved resumes."));
+      } finally {
+        setLoadingResumes(false);
+      }
+    }
+
+    fetchResumes();
+  }, [toast]);
 
   const fetchAnalysis = async (resumeId: number, jobId: number) => {
     setLoading(true);
@@ -137,11 +174,15 @@ export default function RoadmapPage() {
       toast.warning("Job description required", "Please enter a job description.");
       return;
     }
+    if (!selectedResumeId) {
+      toast.warning("Resume required", "Please choose one of your saved resumes.");
+      return;
+    }
     setAnalyzing(true);
     setError(null);
     try {
       const formData = new FormData();
-      if (file) formData.append("file", file);
+      formData.append("resume_id", selectedResumeId);
       formData.append("job_description", jdInput);
       
       const res = await api.post("/analysis/analyze-new", formData);
@@ -395,19 +436,25 @@ export default function RoadmapPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-2">
-              <label className="text-[12px] font-semibold tracking-wide uppercase text-[var(--muted)]">Resume (PDF, Optional)</label>
+              <label className="text-[12px] font-semibold tracking-wide uppercase text-[var(--muted)]">Choose Existing Resume</label>
               <div className="relative group">
-                <input 
-                  type="file" 
-                  accept=".pdf"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                />
-                <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 text-[14px] text-[var(--foreground)] flex items-center gap-3 group-hover:border-indigo-500/50 transition-colors">
-                  <BookOpen className="w-5 h-5 text-indigo-500" />
-                  <span className={file ? "text-[var(--foreground)] font-medium" : "text-[var(--muted)]"}>
-                    {file ? file.name : "Click to select your PDF resume"}
-                  </span>
+                <select
+                  value={selectedResumeId}
+                  onChange={(e) => setSelectedResumeId(e.target.value)}
+                  disabled={loadingResumes || resumes.length === 0}
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 text-[14px] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-2)]/30 transition-shadow"
+                >
+                  {loadingResumes && <option value="">Loading resumes...</option>}
+                  {!loadingResumes && resumes.length === 0 && <option value="">No saved resumes found</option>}
+                  {resumes.map((resume) => (
+                    <option key={resume.id} value={resume.id.toString()}>
+                      {resume.title}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-3 text-[12px] text-[var(--muted)] mt-2">
+                  <BookOpen className="w-4 h-4 text-indigo-500" />
+                  <span>Pick a resume you already saved in the Resume Builder.</span>
                 </div>
               </div>
             </div>
